@@ -1,0 +1,42 @@
+from django.contrib import admin, messages
+from django.utils import timezone
+from simple_history.admin import SimpleHistoryAdmin
+
+from .models import Profile
+
+
+@admin.register(Profile)
+class ProfileAdmin(SimpleHistoryAdmin):
+    list_display = (
+        "full_name",
+        "email",
+        "verification_state",
+        "onboarding_path",
+        "created_at",
+    )
+    list_filter = ("verification_state", "onboarding_path")
+    search_fields = ("full_name", "email", "license_number")
+    readonly_fields = ("verified_at", "verified_by", "created_at", "updated_at")
+    actions = ("verify_profiles", "reject_profiles")
+
+    @admin.action(description="Verify selected profiles")
+    def verify_profiles(self, request, queryset):
+        count = self._set_state(request, queryset, Profile.VerificationState.VERIFIED)
+        self.message_user(request, f"{count} profile(s) verified.", messages.SUCCESS)
+
+    @admin.action(description="Reject selected profiles")
+    def reject_profiles(self, request, queryset):
+        count = self._set_state(request, queryset, Profile.VerificationState.REJECTED)
+        self.message_user(request, f"{count} profile(s) rejected.", messages.SUCCESS)
+
+    def _set_state(self, request, queryset, state):
+        """Save row by row so django-simple-history records each transition."""
+        now = timezone.now()
+        count = 0
+        for profile in queryset:
+            profile.verification_state = state
+            profile.verified_at = now
+            profile.verified_by = request.user
+            profile.save()
+            count += 1
+        return count
