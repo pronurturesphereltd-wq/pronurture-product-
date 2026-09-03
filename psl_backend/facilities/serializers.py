@@ -50,6 +50,20 @@ class BulkImportUploadSerializer(serializers.Serializer):
         return uploaded
 
 
+class FacilityStaffSerializer(serializers.Serializer):
+    """A facility's own professionals, for the rota's assignment dropdown.
+
+    Read-only and deliberately thin: no licence numbers or phone numbers, since
+    the rota screen only needs to name someone.
+    """
+
+    id = serializers.IntegerField(read_only=True)
+    full_name = serializers.CharField(read_only=True)
+    email = serializers.EmailField(read_only=True)
+    verification_state = serializers.CharField(read_only=True)
+    onboarding_path = serializers.CharField(read_only=True)
+
+
 class InviteLinkSerializer(serializers.ModelSerializer):
     register_url = serializers.SerializerMethodField()
 

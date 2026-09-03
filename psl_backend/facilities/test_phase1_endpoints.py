@@ -357,3 +357,145 @@ class PushDeviceRegisterTests(SupabaseAuthMixin, APITestCase):
             self.url, {"fcm_token": "tok-1", "device_type": "windows"}, format="json"
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+@override_settings(
+    SUPABASE_JWT_ISSUER=ISSUER,
+    SUPABASE_JWT_AUDIENCE=AUDIENCE,
+    SUPABASE_JWT_LEEWAY_SECONDS=10,
+)
+class FacilityStaffListTests(SupabaseAuthMixin, APITestCase):
+    """Backs the rota's assignment dropdown."""
+
+    url = "/api/facilities/staff/"
+
+    def setUp(self):
+        super().setUp()
+        self.facility = Facility.objects.create(
+            name="Oakwood",
+            registration_number="REG-1",
+            contact_email="oak@example.com",
+            supabase_user_id=FACILITY_SUPABASE_ID,
+            status=Facility.Status.APPROVED,
+        )
+        Profile.objects.create(
+            full_name="Jane Doe",
+            email="jane@example.com",
+            license_number="NMC-1",
+            license_body="NMC",
+            facility=self.facility,
+            onboarding_path=Profile.OnboardingPath.BULK_IMPORT,
+        )
+
+    def test_requires_authentication(self):
+        self.assertEqual(
+            self.client.get(self.url).status_code, status.HTTP_401_UNAUTHORIZED
+        )
+
+    def test_lists_own_staff(self):
+        self.authenticate(FACILITY_SUPABASE_ID)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([s["full_name"] for s in response.data], ["Jane Doe"])
+
+    def test_never_lists_another_facilitys_staff(self):
+        other = Facility.objects.create(
+            name="Other",
+            registration_number="REG-2",
+            contact_email="other@example.com",
+            supabase_user_id="dddddddd-1111-4222-8333-444444444444",
+            status=Facility.Status.APPROVED,
+        )
+        Profile.objects.create(
+            full_name="Outsider",
+            email="outsider@example.com",
+            license_number="NMC-9",
+            license_body="NMC",
+            facility=other,
+            onboarding_path=Profile.OnboardingPath.BULK_IMPORT,
+        )
+        self.authenticate(FACILITY_SUPABASE_ID)
+        names = [s["full_name"] for s in self.client.get(self.url).data]
+        self.assertEqual(names, ["Jane Doe"])
+
+    def test_does_not_leak_licence_or_phone(self):
+        self.authenticate(FACILITY_SUPABASE_ID)
+        row = self.client.get(self.url).data[0]
+        self.assertNotIn("license_number", row)
+        self.assertNotIn("phone", row)
+
+
+@override_settings(
+    SUPABASE_JWT_ISSUER=ISSUER,
+    SUPABASE_JWT_AUDIENCE=AUDIENCE,
+    SUPABASE_JWT_LEEWAY_SECONDS=10,
+)
+class BulkImportStatusTests(SupabaseAuthMixin, APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.facility = Facility.objects.create(
+            name="Oakwood",
+            registration_number="REG-1",
+            contact_email="oak@example.com",
+            supabase_user_id=FACILITY_SUPABASE_ID,
+            status=Facility.Status.APPROVED,
+        )
+
+    def url_for(self, task_id):
+        return f"/api/facilities/bulk-import/{task_id}/"
+
+    def make_task(self, facility_id, task_id="abc123", success=True):
+        from django_q.models import Task
+
+        return Task.objects.create(
+            id=task_id,
+            name=f"bulk-import-{facility_id}",
+            func="facilities.tasks.run_bulk_import",
+            started=timezone.now(),
+            stopped=timezone.now(),
+            success=success,
+            result={"created": 2, "failed": 1, "errors": [{"row": 3, "error": "bad"}]},
+        )
+
+    def test_requires_authentication(self):
+        self.assertEqual(
+            self.client.get(self.url_for("abc123")).status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
+    def test_unknown_task_reads_as_pending(self):
+        """django-q2 writes no row until the job finishes, so 'not there yet'
+        and 'never existed' are indistinguishable — and must not 404, or the
+        UI would give up while the import is still running."""
+        self.authenticate(FACILITY_SUPABASE_ID)
+        response = self.client.get(self.url_for("not-a-task"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], "pending")
+
+    def test_returns_the_per_row_report(self):
+        self.make_task(self.facility.id)
+        self.authenticate(FACILITY_SUPABASE_ID)
+        response = self.client.get(self.url_for("abc123"))
+        self.assertEqual(response.data["status"], "success")
+        self.assertEqual(response.data["result"]["created"], 2)
+        self.assertEqual(response.data["result"]["errors"][0]["row"], 3)
+
+    def test_cannot_read_another_facilitys_import(self):
+        other = Facility.objects.create(
+            name="Other",
+            registration_number="REG-2",
+            contact_email="other@example.com",
+            supabase_user_id="dddddddd-1111-4222-8333-444444444444",
+            status=Facility.Status.APPROVED,
+        )
+        self.make_task(other.id, task_id="theirs")
+        self.authenticate(FACILITY_SUPABASE_ID)
+        response = self.client.get(self.url_for("theirs"))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_failed_task_reported_as_failed(self):
+        self.make_task(self.facility.id, task_id="boom", success=False)
+        self.authenticate(FACILITY_SUPABASE_ID)
+        self.assertEqual(
+            self.client.get(self.url_for("boom")).data["status"], "failed"
+        )

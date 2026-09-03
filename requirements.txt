@@ -8,6 +8,7 @@ charset-normalizer==3.5.1
 cryptography==50.0.1
 dj-database-url==3.1.2
 Django==6.1.1
+django-cors-headers==4.9.0
 django-picklefield==3.4.0
 django-q2==1.11.1
 django-simple-history==3.13.0

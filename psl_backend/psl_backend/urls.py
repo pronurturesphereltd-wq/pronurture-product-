@@ -6,8 +6,10 @@ from drf_spectacular.views import (
 )
 
 from facilities.views import (
+    BulkImportStatusView,
     FacilityBulkImportView,
     FacilityRegisterView,
+    FacilityStaffView,
     InviteLinkCreateView,
 )
 from profiles.views import (
@@ -30,6 +32,16 @@ urlpatterns = [
         "api/facilities/bulk-import/",
         FacilityBulkImportView.as_view(),
         name="facility-bulk-import",
+    ),
+    path(
+        "api/facilities/bulk-import/<str:task_id>/",
+        BulkImportStatusView.as_view(),
+        name="facility-bulk-import-status",
+    ),
+    path(
+        "api/facilities/staff/",
+        FacilityStaffView.as_view(),
+        name="facility-staff",
     ),
     path(
         "api/facilities/invite-links/",

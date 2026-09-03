@@ -1,0 +1,245 @@
+/* Deliberately plain, per the spec. Readable defaults, no design pass. */
+
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #666666;
+  --line: #d8d8d8;
+  --accent: #1a4f8a;
+  --ok-bg: #e8f5ec;
+  --ok-fg: #0a6b2d;
+  --err-bg: #fdecec;
+  --err-fg: #a11111;
+  --panel: #f7f7f7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --fg: #ececec;
+    --muted: #9aa0a6;
+    --line: #363a40;
+    --accent: #7fb2ee;
+    --ok-bg: #122c1c;
+    --ok-fg: #7fd6a0;
+    --err-bg: #3a1a1a;
+    --err-fg: #f0a0a0;
+    --panel: #1f2227;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    15px/1.6 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+
+main {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0 0 0.25rem;
+}
+
+.sub {
+  color: var(--muted);
+  margin: 0 0 1.75rem;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+input[type="email"],
+input[type="password"],
+input[type="text"] {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.55rem 1.1rem;
+  color: var(--bg);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  color: var(--fg);
+  background: transparent;
+  border-color: var(--line);
+}
+
+.row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.notice {
+  padding: 0.7rem 0.9rem;
+  border-radius: 5px;
+  margin: 1rem 0;
+}
+
+.notice.error {
+  background: var(--err-bg);
+  color: var(--err-fg);
+}
+
+.notice.ok {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.9rem 1.1rem;
+  margin: 1.25rem 0;
+}
+
+dl.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0;
+}
+
+dl.kv dt {
+  color: var(--muted);
+}
+
+dl.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+pre {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  font:
+    13px/1.5 ui-monospace,
+    Consolas,
+    monospace;
+}
+
+nav.top {
+  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 1.25rem;
+}
+
+nav.top a {
+  color: var(--accent);
+  margin-right: 1rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0 1.25rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+thead th {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+tbody th[scope="row"] {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+select,
+input[type="datetime-local"],
+input[type="file"] {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 2rem 0 0.5rem;
+}
+
+details.panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+code {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.05rem 0.3rem;
+  font:
+    13px ui-monospace,
+    Consolas,
+    monospace;
+}
+
+nav.top button {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.9rem;
+}

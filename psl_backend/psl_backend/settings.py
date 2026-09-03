@@ -88,6 +88,21 @@ SHIFT_REMINDER_LEAD_MINUTES = int(env("SHIFT_REMINDER_LEAD_MINUTES", "60"))
 SHIFT_REMINDER_WINDOW_MINUTES = int(env("SHIFT_REMINDER_WINDOW_MINUTES", "20"))
 SHIFT_REMINDER_INTERVAL_MINUTES = int(env("SHIFT_REMINDER_INTERVAL_MINUTES", "15"))
 
+# CORS — the Next.js facility app is a separate origin from this API, so the
+# browser blocks its calls without these headers. An explicit allow-list, never
+# CORS_ALLOW_ALL_ORIGINS: these endpoints are authenticated and can provision
+# accounts. Credentials stay off because auth travels as a Bearer token, not a
+# cookie, so no cross-site cookie is ever needed.
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in env(
+        "DJANGO_CORS_ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    ).split(",")
+    if origin.strip()
+]
+CORS_ALLOW_CREDENTIALS = False
+
 # Whether a facility must be approved before it can import staff, issue invite
 # links, or manage a rota. Secure default; set to 0 for local testing against a
 # facility still sitting in the Phase 0 pending queue.
@@ -111,6 +126,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "simple_history",
     "django_q",
+    "corsheaders",
     "core",
     "facilities",
     "profiles",
@@ -119,6 +135,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Must precede CommonMiddleware so preflight OPTIONS requests get their
+    # headers before anything can redirect or reject them.
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",

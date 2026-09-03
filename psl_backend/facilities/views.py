@@ -4,16 +4,19 @@ from django.utils import timezone
 from django_q.tasks import async_task
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.permissions import IsFacility
+from profiles.models import Profile
 
 from .models import Facility, InviteLink
 from .serializers import (
     BulkImportUploadSerializer,
     FacilityRegistrationSerializer,
+    FacilityStaffSerializer,
     InviteLinkSerializer,
 )
 
@@ -86,6 +89,56 @@ class FacilityBulkImportView(APIView):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+
+
+class BulkImportStatusView(APIView):
+    """Read the outcome of a queued import.
+
+    The upload endpoint answers 202 with a task id because the work runs in a
+    worker, so the per-row report only exists once django-q2 finishes. Without
+    this the facility has no way to learn which rows failed.
+    """
+
+    permission_classes = [IsFacility]
+
+    @extend_schema(responses={200: None}, summary="Bulk import status")
+    def get(self, request, task_id):
+        from django_q.models import Task
+
+        task = Task.objects.filter(id=task_id).first()
+        if task is None:
+            # django-q2 only writes a Task row on completion, so an absent row
+            # means queued or still running. An unknown id looks the same; the
+            # caller times out rather than being told whether it exists.
+            return Response({"status": "pending"})
+
+        # Task ids are unguessable, but scope anyway: never let one facility
+        # read another's import report.
+        if task.name != f"bulk-import-{request.facility.id}":
+            raise NotFound("No such import for this facility.")
+
+        return Response(
+            {
+                "status": "success" if task.success else "failed",
+                "result": task.result,
+                "started": task.started,
+                "stopped": task.stopped,
+            }
+        )
+
+
+class FacilityStaffView(APIView):
+    """List this facility's professionals, for the rota assignment dropdown."""
+
+    permission_classes = [IsFacility]
+
+    @extend_schema(
+        responses={200: FacilityStaffSerializer(many=True)},
+        summary="List facility staff",
+    )
+    def get(self, request):
+        staff = Profile.objects.filter(facility=request.facility).order_by("full_name")
+        return Response(FacilityStaffSerializer(staff, many=True).data)
 
 
 class InviteLinkCreateView(APIView):
