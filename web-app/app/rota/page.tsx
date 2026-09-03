@@ -168,7 +168,13 @@ export default function RotaPage() {
       );
       const bits = [`${result.published} shift(s) published`];
       if (result.notifications_queued) {
-        bits.push(`${result.notifications_queued} push notification(s) sent`);
+        // "queued", never "sent": the endpoint hands the job to django-q2 and
+        // returns. Whether anything reaches a handset depends on the
+        // professional having registered a device, which is only known later.
+        bits.push(
+          `${result.notifications_queued} notification(s) queued for assigned staff` +
+            " (delivered only to those with a registered device)",
+        );
       }
       if (result.unassigned_shifts) {
         bits.push(
