@@ -66,8 +66,15 @@ Added in Phase 1A:
 
 ## Current status (update this section as phases complete)
 - **Phase 0:** Complete. Facility approval, licence verification, RBAC, audit trail — committed at `1c7fba7`.
-- **Phase 1A (in progress):** Bulk import, invite-link onboarding, rota builder + publish, push notifications, shift reminders. Backend steps 1–5 built and tested (118 tests passing). Verified live: the reminder sweep fires exactly once against the running `qcluster`, and bulk import provisions a real Supabase Auth account and sends the invite email. Step 6 (minimal Next.js facility app) not yet started. Remaining gap: push delivery needs `FIREBASE_CREDENTIALS_FILE`.
+- **Phase 1A backend (steps 1–5): complete.** Bulk import, invite-link onboarding, rota builder + publish, push notifications, shift reminders. 124 tests passing. Done-criteria 1–5 verified against live infrastructure, not just tests:
+  1. CSV import returns 202 immediately; rows are created by a django-q2 worker.
+  2. A real Supabase Auth account was provisioned and the invite email dispatched (`confirmation_sent_at` set) using the new-format `SUPABASE_SECRET_KEY`.
+  3. Invite-link self-registration lands in `self_registered_unverified`, the existing Phase 0 queue.
+  4. Publishing a shift delivered a real FCM push to a registered device (`sent: 1`) via `qcluster`.
+  5. The reminder sweep fired exactly once across three consecutive scheduled runs.
+- **Criterion 6 is NOT met** and cannot be until step 6 exists: it requires the minimal Next.js facility app to drive all of the above through a UI. That is the only remaining Phase 1A work.
 - **Running it:** the web server alone is not enough — `manage.py qcluster` must run for imports, pushes and reminders. Register the reminder schedule once with `manage.py setup_shift_reminders`.
+- **After any system clock correction**, re-run `manage.py setup_shift_reminders`. `Schedule.next_run` is an absolute timestamp and does not self-heal: a clock that was running fast leaves the sweep stalled for the size of the correction, silently and with nothing logged.
 - **Not yet built:** Phase 1B (shift swap, leave application, compliance monitoring — see PSL_Phase1_Spec.md Section 7), Phase 2 (Jobs), Phase 3 (Academy), Phase 4 (Analytics).
 
 Do not start work on a phase beyond what's marked "in progress" or listed as current focus in a prompt, even if it seems like a natural next step. Ask before expanding scope.

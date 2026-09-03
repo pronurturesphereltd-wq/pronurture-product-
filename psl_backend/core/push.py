@@ -85,16 +85,27 @@ def send_to_tokens(tokens, title, body, data=None):
             sent += 1
         except Exception as exc:
             failed += 1
-            if _is_unregistered(exc):
+            if _is_dead_token(exc):
                 invalid.append(token)
             else:
                 logger.warning("Push to a device failed: %s", exc)
     return sent, failed, invalid
 
 
-def _is_unregistered(exc):
+def _is_dead_token(exc):
+    """Whether this token should be deleted rather than retried forever.
+
+    UnregisteredError and SenderIdMismatchError always mean the token itself
+    is finished. InvalidArgumentError is broader — FCM also raises it for a
+    malformed payload — so it only counts when the message names the
+    registration token. Treating every InvalidArgumentError as a dead token
+    would let one payload bug delete every device in the database.
+    """
     name = type(exc).__name__
     if name in ("UnregisteredError", "SenderIdMismatchError"):
         return True
+
     text = str(exc).lower()
+    if name == "InvalidArgumentError":
+        return "registration token" in text
     return "unregistered" in text or "not found" in text
