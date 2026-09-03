@@ -64,3 +64,23 @@ class Profile(models.Model):
 
     def __str__(self):
         return f"{self.full_name} ({self.email})"
+
+
+class PushDevice(models.Model):
+    class DeviceType(models.TextChoices):
+        IOS = "ios", "iOS"
+        ANDROID = "android", "Android"
+
+    profile = models.ForeignKey(
+        "profiles.Profile", on_delete=models.CASCADE, related_name="push_devices"
+    )
+    fcm_token = models.CharField(max_length=255, unique=True)
+    device_type = models.CharField(max_length=20, choices=DeviceType.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.get_device_type_display()} device for {self.profile.full_name}"

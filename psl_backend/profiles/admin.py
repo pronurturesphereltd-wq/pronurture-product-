@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from django.utils import timezone
 from simple_history.admin import SimpleHistoryAdmin
 
-from .models import Profile
+from .models import Profile, PushDevice
 
 
 @admin.register(Profile)
@@ -40,3 +40,11 @@ class ProfileAdmin(SimpleHistoryAdmin):
             profile.save()
             count += 1
         return count
+
+
+@admin.register(PushDevice)
+class PushDeviceAdmin(admin.ModelAdmin):
+    list_display = ("profile", "device_type", "created_at", "updated_at")
+    list_filter = ("device_type",)
+    search_fields = ("profile__full_name", "profile__email")
+    readonly_fields = ("created_at", "updated_at")

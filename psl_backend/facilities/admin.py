@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from django.utils import timezone
 from simple_history.admin import SimpleHistoryAdmin
 
-from .models import Facility
+from .models import Facility, InviteLink
 
 
 @admin.register(Facility)
@@ -34,3 +34,14 @@ class FacilityAdmin(SimpleHistoryAdmin):
             facility.save()
             count += 1
         return count
+
+
+@admin.register(InviteLink)
+class InviteLinkAdmin(SimpleHistoryAdmin):
+    list_display = ("facility", "token", "expires_at", "is_expired", "created_at")
+    list_filter = ("facility",)
+    readonly_fields = ("token", "created_at")
+
+    @admin.display(boolean=True, description="Expired")
+    def is_expired(self, obj):
+        return obj.is_expired

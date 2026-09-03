@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Profile
+from .models import Profile, PushDevice
 
 WRITABLE_FIELDS = (
     "full_name",
@@ -80,3 +80,36 @@ class ProfileSelfRegisterSerializer(serializers.ModelSerializer):
             supabase_user_id=self.context["supabase_user_id"],
             **validated_data,
         )
+
+
+class ProfileInviteRegisterSerializer(serializers.ModelSerializer):
+    """Self-registration through a facility's invite link.
+
+    The token in the URL is the authorisation, and it determines the facility —
+    so `facility` is not writable here. Accepting one from the body would let a
+    holder of any valid invite attach themselves to a facility of their choice.
+    """
+
+    class Meta:
+        model = Profile
+        fields = (*READ_ONLY_FIELDS, *WRITABLE_FIELDS, "facility")
+        read_only_fields = (*READ_ONLY_FIELDS, "facility")
+
+    def create(self, validated_data):
+        return Profile.objects.create(
+            facility=self.context["facility"],
+            onboarding_path=Profile.OnboardingPath.INVITE_LINK,
+            verification_state=Profile.VerificationState.SELF_REGISTERED_UNVERIFIED,
+            supabase_user_id=self.context.get("supabase_user_id"),
+            **validated_data,
+        )
+
+
+class PushDeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushDevice
+        fields = ("id", "fcm_token", "device_type", "created_at", "updated_at")
+        read_only_fields = ("id", "created_at", "updated_at")
+        # Uniqueness is handled by the view's upsert: the same handset
+        # re-registering must not be a 400.
+        extra_kwargs = {"fcm_token": {"validators": []}}

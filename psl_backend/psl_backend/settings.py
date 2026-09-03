@@ -51,6 +51,44 @@ SUPABASE_JWT_AUDIENCE = env("SUPABASE_JWT_AUDIENCE", "authenticated")
 SUPABASE_JWT_LEEWAY_SECONDS = int(env("SUPABASE_JWT_LEEWAY_SECONDS", "10"))
 SUPABASE_JWKS_CACHE_SECONDS = int(env("SUPABASE_JWKS_CACHE_SECONDS", "300"))
 
+# Supabase Auth Admin API — provisions accounts during bulk import. This key
+# bypasses row-level security and must never reach the frontend or version
+# control. Absent, bulk import still creates Profile rows but provisions no
+# accounts, and says so in the import report rather than failing silently.
+#
+# Prefer a new-format secret key (sb_secret_...). The legacy service_role JWT
+# is read as a fallback so an existing deployment keeps working, but Supabase
+# is retiring those. The two formats need different headers — see
+# core/supabase_admin.py.
+SUPABASE_SECRET_KEY = env("SUPABASE_SECRET_KEY", "") or env(
+    "SUPABASE_SERVICE_ROLE_KEY", ""
+)
+SUPABASE_AUTH_ADMIN_URL = f"{SUPABASE_URL}/auth/v1/admin"
+# Where the invite/login email sends the professional.
+SUPABASE_INVITE_REDIRECT_URL = env(
+    "SUPABASE_INVITE_REDIRECT_URL", "http://localhost:3000/auth/callback"
+)
+
+# Firebase Cloud Messaging — path to the service account JSON. Absent, push
+# sends are skipped with a logged warning instead of raising.
+FIREBASE_CREDENTIALS_FILE = env("FIREBASE_CREDENTIALS_FILE", "")
+
+# Shift reminders: how far ahead to warn, and how wide the sweep window is.
+# The window must comfortably exceed the scheduler interval or shifts can fall
+# between two runs and never be reminded at all.
+SHIFT_REMINDER_LEAD_MINUTES = int(env("SHIFT_REMINDER_LEAD_MINUTES", "60"))
+SHIFT_REMINDER_WINDOW_MINUTES = int(env("SHIFT_REMINDER_WINDOW_MINUTES", "20"))
+SHIFT_REMINDER_INTERVAL_MINUTES = int(env("SHIFT_REMINDER_INTERVAL_MINUTES", "15"))
+
+# Whether a facility must be approved before it can import staff, issue invite
+# links, or manage a rota. Secure default; set to 0 for local testing against a
+# facility still sitting in the Phase 0 pending queue.
+REQUIRE_APPROVED_FACILITY = env("PSL_REQUIRE_APPROVED_FACILITY", "1") == "1"
+
+# Bulk import guard rails.
+BULK_IMPORT_MAX_BYTES = int(env("BULK_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)))
+BULK_IMPORT_MAX_ROWS = int(env("BULK_IMPORT_MAX_ROWS", "5000"))
+
 
 # Application definition
 
@@ -64,9 +102,11 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "simple_history",
+    "django_q",
     "core",
     "facilities",
     "profiles",
+    "rota",
 ]
 
 MIDDLEWARE = [
@@ -147,6 +187,25 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+}
+
+# Background jobs. The ORM broker uses the Postgres database already in play,
+# so there is no Redis or separate queue service to run — one process,
+# `manage.py qcluster`, alongside the web server.
+Q_CLUSTER = {
+    "name": "psl",
+    "workers": int(env("Q_WORKERS", "2")),
+    "recycle": 500,
+    "timeout": 600,
+    # retry must exceed timeout, or a slow job is re-queued while still running.
+    "retry": 900,
+    "queue_limit": 50,
+    "bulk": 10,
+    "orm": "default",
+    "save_limit": 250,
+    "catch_up": False,
+    # Run tasks inline during tests instead of requiring a live cluster.
+    "sync": RUNNING_TESTS,
 }
 
 SPECTACULAR_SETTINGS = {
