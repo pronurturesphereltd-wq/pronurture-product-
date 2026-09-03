@@ -71,7 +71,15 @@ SUPABASE_INVITE_REDIRECT_URL = env(
 
 # Firebase Cloud Messaging — path to the service account JSON. Absent, push
 # sends are skipped with a logged warning instead of raising.
-FIREBASE_CREDENTIALS_FILE = env("FIREBASE_CREDENTIALS_FILE", "")
+#
+# A relative path is resolved against BASE_DIR (the directory holding
+# manage.py), not the process working directory. The web server and the
+# qcluster worker are launched separately and need not share a cwd, so a bare
+# relative path would otherwise resolve for one and not the other.
+_firebase_credentials = env("FIREBASE_CREDENTIALS_FILE", "").strip()
+if _firebase_credentials and not Path(_firebase_credentials).is_absolute():
+    _firebase_credentials = str(BASE_DIR / _firebase_credentials)
+FIREBASE_CREDENTIALS_FILE = _firebase_credentials
 
 # Shift reminders: how far ahead to warn, and how wide the sweep window is.
 # The window must comfortably exceed the scheduler interval or shifts can fall

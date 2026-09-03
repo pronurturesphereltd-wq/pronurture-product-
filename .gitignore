@@ -3,6 +3,18 @@
 .env.*
 !.env.example
 
+# Credential files. A Firebase service account JSON carries a private key
+# granting admin access to the project, so these are matched by name wherever
+# they land rather than relying on remembering to keep them out of the tree.
+# Note: `secrets/*` not `secrets/` — git cannot re-include a file whose parent
+# directory is excluded, and the README carries the setup instructions.
+secrets/*
+!secrets/README.txt
+*firebase*.json
+*service-account*.json
+*serviceAccount*.json
+*-credentials.json
+
 # Virtualenv
 venv/
 .venv/
