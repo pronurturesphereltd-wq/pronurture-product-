@@ -50,3 +50,6 @@ Build a custom DRF `authentication.BaseAuthentication` subclass in `core/` that 
 6. Logging in as a `verification_officer` user shows no Facility section in the Admin nav at all; logging in as `admin` shows both.
 
 Stop here. Do not build rota, jobs, courses, payments, or anything past this list, even if it seems like a natural next step.
+
+## Deferred: legacy JWT secret rotation
+The Supabase project's legacy JWT secret passed through a chat/Claude Code session and should be considered exposed. Rotation is deliberately deferred, not forgotten — it requires migrating off legacy `anon`/`service_role` API keys first, which needs to happen *with* the Supabase Auth client integration (mobile/web), not ahead of it, since that's the code that will actually depend on the new keys. Revisit this the moment Supabase Auth wiring starts in the React Native or Next.js apps — do the key migration and legacy secret revocation as part of that work, not as an afterthought.
