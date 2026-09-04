@@ -7,6 +7,7 @@ type Swap = {
   id: number;
   shift: number;
   shift_role: string;
+  shift_ward: string;
   shift_start_time: string;
   requesting_professional_name: string;
   target_professional_name: string | null;
@@ -76,7 +77,8 @@ export default function SwapRequests({
       {!loading && swaps.length === 0 && (
         <p className="sub">
           Nobody has offered a shift for swap. Professionals open these
-          themselves; there is nothing to approve here.
+          themselves; there is nothing to approve here. Only someone designated
+          for the shift&apos;s exact role can accept one.
         </p>
       )}
 
@@ -93,7 +95,15 @@ export default function SwapRequests({
           <tbody>
             {open.map((swap) => (
               <tr key={swap.id}>
-                <td>{swap.shift_role}</td>
+                <td>
+                  {swap.shift_role}
+                  {swap.shift_ward && (
+                    <>
+                      <br />
+                      <span className="sub">{swap.shift_ward}</span>
+                    </>
+                  )}
+                </td>
                 <td>{swap.requesting_professional_name}</td>
                 <td>
                   {swap.target_professional_name ?? (

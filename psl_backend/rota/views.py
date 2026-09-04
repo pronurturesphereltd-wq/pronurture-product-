@@ -12,11 +12,28 @@ from rest_framework.views import APIView
 from core.permissions import IsFacility, IsFacilityOrProfessional, IsProfessional
 
 from .models import Shift, ShiftSwapRequest
+from .roles import role_matches
 from .serializers import (
     PublishShiftsSerializer,
     ShiftSerializer,
     ShiftSwapRequestSerializer,
 )
+
+
+def _role_mismatch_message(profile_role, shift_role):
+    """A blank role is the common case at first — the field is new and nothing
+    backfills it — so it gets an answer that says what to do about it, rather
+    than reporting that the caller is designated ''."""
+    if not profile_role.strip():
+        return (
+            "Your profile has no designated role, so you cannot accept shift "
+            f"swaps. This shift requires '{shift_role}'. Ask your facility to "
+            "set your role."
+        )
+    return (
+        f"Role mismatch: this shift requires '{shift_role}', you are "
+        f"designated '{profile_role}'."
+    )
 
 
 class ShiftListCreateView(APIView):
@@ -271,6 +288,22 @@ class SwapRequestAcceptView(APIView):
             # Not hidden: you already know your own request exists.
             return Response(
                 {"detail": "You cannot accept your own swap request."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # The role guardrail, checked before the claim rather than after it.
+        # Order is the whole point: the claim is a one-way door — it flips the
+        # request to accepted and there is no un-accept — so a mismatched
+        # attempt has to bounce while the request is still pending and still
+        # available to someone who is actually designated for the role.
+        #
+        # 400, not 403 or 404. The enumeration-safe 404s elsewhere in this view
+        # hide whether a row exists; this is a different category entirely. The
+        # caller may see the request, and telling them exactly why they cannot
+        # take it is the useful answer.
+        if not role_matches(profile.role, swap.shift.role):
+            return Response(
+                {"detail": _role_mismatch_message(profile.role, swap.shift.role)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

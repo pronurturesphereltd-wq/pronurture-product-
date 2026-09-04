@@ -38,6 +38,8 @@ Added in Phase 1B:
 
 **ShiftSwapRequest** (rota): shift FK, requesting/target/accepted_by Profile FKs, status, decided_at — with a partial `UniqueConstraint` on `shift` where `status='pending'`, so one shift can carry only one open offer. **LeaveApplication** (leave): professional FK, start/end_date, reason, status, decided_at, and a `CheckConstraint` that end_date is not before start_date. **ComplianceAlert** (compliance): profile FK, alert_type, due_date, status, resolved_at, with a partial `UniqueConstraint` on (profile, alert_type) where `status='open'` — the enforced half of the sweep's idempotency guard. **Profile** gains `license_expiry_date`.
 
+Added by the role-guardrail addendum: **Profile** gains `role` (operational designation, facility-controlled, gates swap acceptance) and **Shift** gains `ward` (informational only, gates nothing).
+
 ComplianceAlert is the one new model with no `HistoricalRecords`: it is derived state the sweep regenerates from the profile's licence data, and the licence changes that drive it are already in the Profile history.
 
 `HistoricalRecords` is passed `get_user=core.history.get_history_user`. Public API callers are Supabase identities with no Django User row, and simple_history's default raises ValueError on them.
@@ -98,7 +100,21 @@ Added in Phase 1B:
 - **After any system clock correction**, re-run both setup commands. `Schedule.next_run` is an absolute timestamp and does not self-heal: a clock that was running fast leaves the sweep stalled for the size of the correction, silently and with nothing logged. This applies to every schedule created from now on, not just the one it first bit.
 - **Phase 1B: in progress.** Steps 1–5 of PSL_Phase1B_Spec.md Section 7 are built. 218 tests passing, `next build` and `eslint` clean. Swap requests with the atomic accept and its concurrency proof; leave applications with the facility approval queue; the daily compliance sweep; and the front end — a `/compliance` page plus swap and leave sections on `/rota`, keeping the app at four pages. **Nothing here is verified against live infrastructure yet** — that is step 7, and it has not run. A passing build is not a working page; Phase 1A's criterion 6 made that distinction the hard way.
 - **Step 6 (facility isolation): done, and it was not just a review pass.** All ten Phase 1B endpoints now have isolation tests against every hostile actor — foreign facility, foreign professional, wrong role, unapproved facility. The audit found a real information leak and a second, subtler instance of it; see below. 234 tests passing.
+- **Role guardrail on swaps: built and tested** (PSL_Phase1B_Role_Guardrail_Addendum.md). See its own section below.
 - **Step 7 remains:** the end-to-end run against live infrastructure.
+
+## Role guardrail on shift swaps
+A patient-safety rule, so it is enforced server-side: a professional cannot accept a swap for a role they are not designated for. `Profile.role` is the operational designation ("ENT Registrar", "A&E Nurse") — facility-controlled information, distinct from the licence fields PSL verifies, and set in Django Admin like `license_expiry_date`. `Shift.ward` exists now too and is **purely informational; it never gates anything**.
+
+The check lives in `SwapRequestAcceptView` and runs **before** the atomic claim. That ordering is the requirement, not an implementation detail: the claim is a one-way door, so a mismatched attempt has to bounce while the request is still `pending` and still available to someone actually designated for the role. It answers **400** — a validation failure, deliberately not reusing the enumeration-safe 403/404 pattern, because the caller can already see the request and is entitled to know why they cannot take it.
+
+**A blank role blocks every swap, on purpose.** The field is new and nothing backfills it. Failing closed on missing data beats a silent bypass — and note that blank would match blank if the comparison were left to plain string equality, which is exactly the bug this avoids.
+
+Comparison ignores case and collapses whitespace (`rota/roles.py`). This is a deliberate reading of the spec's "exact match": what "exact" rules out is *semantic* looseness — no hierarchy, no specialty matching, no "any Registrar covers any Registrar" — not the difference between `ENT Registrar` and `ENT  registrar`, which are the same job typed twice. There are tests pinning both halves of that.
+
+Scope limits, each with a test so they are not widened by accident: initial shift assignment is **not** gated (a facility can still roster anyone onto anything), cancelling is not gated, and ward is not gated.
+
+**Before testing swaps, set `Profile.role` in Django Admin.** All three live profiles currently have a blank role, so every swap acceptance will be refused until they are given one — correctly, but it will look like a bug if you have not read this.
 
 ## Cross-tenant lookups must be scoped, not checked afterwards
 Found during the step 6 audit, fixed across every Phase 1B endpoint. Two variants of the same leak:

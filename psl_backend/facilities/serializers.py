@@ -60,6 +60,10 @@ class FacilityStaffSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     full_name = serializers.CharField(read_only=True)
     email = serializers.EmailField(read_only=True)
+    # Included because it now has consequences: a shift whose role does not
+    # match its assignee's cannot be swapped away, so a facility building a
+    # rota needs to see who is designated what.
+    role = serializers.CharField(read_only=True)
     verification_state = serializers.CharField(read_only=True)
     onboarding_path = serializers.CharField(read_only=True)
 

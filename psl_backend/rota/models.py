@@ -13,7 +13,18 @@ class Shift(models.Model):
         on_delete=models.SET_NULL,
         help_text="Nullable: a draft shift can exist before anyone is assigned.",
     )
-    role = models.CharField(max_length=100)
+    role = models.CharField(
+        max_length=100,
+        help_text=(
+            "What the shift needs covering, e.g. 'ENT Registrar'. Compared "
+            "against Profile.role when someone accepts a swap."
+        ),
+    )
+    ward = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Informational only. Never gates anything, by design.",
+    )
     start_time = models.DateTimeField()
     end_time = models.DateTimeField()
     is_published = models.BooleanField(default=False)

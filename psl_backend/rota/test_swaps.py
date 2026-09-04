@@ -32,12 +32,21 @@ def make_facility(name="Oakwood", email="oak@example.com"):
     )
 
 
-def make_profile(facility, name, email, sub):
+# Every fixture profile is designated for the role make_shift creates, so the
+# tests in this module exercise swap mechanics rather than the role guardrail.
+# The guardrail has its own file, test_role_guardrail.py. Leaving this blank
+# would make every accept here fail for the wrong reason — blank is a
+# deliberate mismatch, not a default pass.
+SHIFT_ROLE = "Night nurse"
+
+
+def make_profile(facility, name, email, sub, role=SHIFT_ROLE):
     return Profile.objects.create(
         full_name=name,
         email=email,
         license_number=f"NMC-{name}",
         license_body="NMC",
+        role=role,
         facility=facility,
         supabase_user_id=sub,
         onboarding_path=Profile.OnboardingPath.BULK_IMPORT,
@@ -49,7 +58,7 @@ def make_shift(facility, professional, published=True, days_ahead=2):
     return Shift.objects.create(
         facility=facility,
         professional=professional,
-        role="Night nurse",
+        role=SHIFT_ROLE,
         start_time=start,
         end_time=start + timedelta(hours=8),
         is_published=published,

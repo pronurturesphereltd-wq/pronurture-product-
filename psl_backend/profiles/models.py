@@ -29,6 +29,16 @@ class Profile(models.Model):
         blank=True,
         help_text="Drives the compliance sweep. Null means never checked.",
     )
+    role = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text=(
+            "Operational designation, e.g. 'ENT Registrar'. Distinct from the "
+            "licence fields: this is what the facility says someone does, not "
+            "a credential PSL verifies. Gates shift-swap acceptance — a blank "
+            "role blocks every swap, deliberately."
+        ),
+    )
     supabase_user_id = models.UUIDField(
         unique=True,
         null=True,

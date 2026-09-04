@@ -17,6 +17,7 @@ class ShiftSerializer(serializers.ModelSerializer):
             "professional",
             "professional_name",
             "role",
+            "ward",
             "start_time",
             "end_time",
             "is_published",
@@ -72,6 +73,7 @@ class PublishShiftsSerializer(serializers.Serializer):
 
 class ShiftSwapRequestSerializer(serializers.ModelSerializer):
     shift_role = serializers.CharField(source="shift.role", read_only=True)
+    shift_ward = serializers.CharField(source="shift.ward", read_only=True)
     shift_start_time = serializers.DateTimeField(
         source="shift.start_time", read_only=True
     )
@@ -91,6 +93,7 @@ class ShiftSwapRequestSerializer(serializers.ModelSerializer):
             "id",
             "shift",
             "shift_role",
+            "shift_ward",
             "shift_start_time",
             "requesting_professional",
             "requesting_professional_name",

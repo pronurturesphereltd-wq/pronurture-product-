@@ -10,6 +10,9 @@ class ProfileAdmin(SimpleHistoryAdmin):
     list_display = (
         "full_name",
         "email",
+        # Gates swap acceptance. Blank blocks every swap, so it needs to be
+        # visible at a glance rather than buried in the edit form.
+        "role",
         "verification_state",
         "onboarding_path",
         # Drives the compliance sweep. Set here during licence verification —
@@ -17,8 +20,8 @@ class ProfileAdmin(SimpleHistoryAdmin):
         "license_expiry_date",
         "created_at",
     )
-    list_filter = ("verification_state", "onboarding_path")
-    search_fields = ("full_name", "email", "license_number")
+    list_filter = ("verification_state", "onboarding_path", "role")
+    search_fields = ("full_name", "email", "license_number", "role")
     readonly_fields = ("verified_at", "verified_by", "created_at", "updated_at")
     actions = ("verify_profiles", "reject_profiles")
 

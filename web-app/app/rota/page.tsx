@@ -18,6 +18,7 @@ type Shift = {
   professional: number | null;
   professional_name: string | null;
   role: string;
+  ward: string;
   start_time: string;
   end_time: string;
   is_published: boolean;
@@ -29,6 +30,7 @@ type Staff = {
   id: number;
   full_name: string;
   email: string;
+  role: string;
   verification_state: string;
 };
 
@@ -74,6 +76,7 @@ export default function RotaPage() {
   const [reloadKey, setReloadKey] = useState(0);
 
   const [role, setRole] = useState("");
+  const [ward, setWard] = useState("");
   const [professional, setProfessional] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
@@ -146,11 +149,13 @@ export default function RotaPage() {
     try {
       await apiPostJson("/api/rota/shifts/", {
         role,
+        ward,
         professional: professional ? Number(professional) : null,
         start_time: toIso(startTime),
         end_time: toIso(endTime),
       });
       setRole("");
+      setWard("");
       setProfessional("");
       setStartTime("");
       setEndTime("");
@@ -245,6 +250,21 @@ export default function RotaPage() {
               placeholder="Night nurse"
               required
             />
+            <p className="sub" style={{ margin: "0.3rem 0 0" }}>
+              Only a professional designated for this exact role can accept a
+              swap on it. Roles are set by PSL in the admin console.
+            </p>
+          </div>
+
+          <div className="field">
+            <label htmlFor="ward">Ward</label>
+            <input
+              id="ward"
+              type="text"
+              value={ward}
+              onChange={(e) => setWard(e.target.value)}
+              placeholder="Ward 4 (optional)"
+            />
           </div>
 
           <div className="field">
@@ -257,13 +277,21 @@ export default function RotaPage() {
               <option value="">Unassigned</option>
               {staff.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.full_name} ({s.verification_state.replace(/_/g, " ")})
+                  {s.full_name}
+                  {s.role ? ` — ${s.role}` : " — no role set"} (
+                  {s.verification_state.replace(/_/g, " ")})
                 </option>
               ))}
             </select>
             {staff.length === 0 && (
               <p className="sub">
                 No staff yet — import some on the Import staff page.
+              </p>
+            )}
+            {staff.length > 0 && staff.some((s) => !s.role) && (
+              <p className="sub">
+                Some staff have no role set. They can still be assigned shifts,
+                but cannot accept a swap from anyone until PSL sets one.
               </p>
             )}
           </div>
@@ -321,6 +349,7 @@ export default function RotaPage() {
                     />
                   </th>
                   <th scope="col">Role</th>
+                  <th scope="col">Ward</th>
                   <th scope="col">Assigned to</th>
                   <th scope="col">Starts</th>
                   <th scope="col">Ends</th>
@@ -338,6 +367,7 @@ export default function RotaPage() {
                       />
                     </td>
                     <td>{s.role}</td>
+                    <td>{s.ward || <span className="sub">—</span>}</td>
                     <td>
                       {s.professional_name ?? (
                         <span className="sub">Unassigned</span>
@@ -374,6 +404,7 @@ export default function RotaPage() {
             <thead>
               <tr>
                 <th scope="col">Role</th>
+                <th scope="col">Ward</th>
                 <th scope="col">Assigned to</th>
                 <th scope="col">Starts</th>
                 <th scope="col">Reminder</th>
@@ -383,6 +414,7 @@ export default function RotaPage() {
               {published.map((s) => (
                 <tr key={s.id}>
                   <td>{s.role}</td>
+                  <td>{s.ward || <span className="sub">—</span>}</td>
                   <td>
                     {s.professional_name ?? (
                       <span className="sub">Unassigned</span>
