@@ -176,10 +176,23 @@ WSGI_APPLICATION = "psl_backend.wsgi.application"
 
 # Database — Supabase Postgres
 
+# CONN_MAX_AGE defaults to 0 — close the connection after each request.
+#
+# It was 600, which is the right instinct for a normal Postgres but wrong in
+# front of Supabase's session-mode pooler. That pooler caps at 15 clients, and
+# `runserver` handles each request on its own thread, so every concurrent
+# request takes a connection and holds it for ten minutes afterwards. A few
+# page loads exhausted the pool and the API started answering
+# `OperationalError: (EMAXCONNSESSION) max clients reached in session mode`
+# on requests that had nothing wrong with them.
+#
+# Reconnecting per request costs a little latency and cannot exhaust anything.
+# Raise it via DJANGO_CONN_MAX_AGE behind a deployment that has its own pool
+# and does not go through the session pooler.
 DATABASES = {
     "default": dj_database_url.parse(
         env("DATABASE_URL", required=True),
-        conn_max_age=600,
+        conn_max_age=int(env("DJANGO_CONN_MAX_AGE", "0")),
         conn_health_checks=True,
     )
 }

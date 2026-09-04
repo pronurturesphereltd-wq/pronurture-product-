@@ -180,12 +180,23 @@ It refuses to invent a Profile: an orphan auth account with nothing pointing at 
 
 `--reset-password` handles a different case: the profile is already linked, but the account cannot sign in. An invited professional who never opened the email has **no password and an unconfirmed address** — the invite creates the user, and the emailed link is where both would have been settled. Both failures report as `invalid_credentials`, so the account looks healthy from the outside and the profile looks correctly linked. The flag sets a password *and* confirms the email; setting only the password leaves sign-in failing for the other reason, which reads as a wrong password.
 
-## The pooler ceiling is 15 sessions, and dev processes hold them
-`DATABASE_URL` points at Supabase's session-mode pooler, capped at `pool_size: 15`. `conn_max_age=600` means every Django process holds its connections for ten minutes, and the qcluster's ORM broker polls constantly so its connections never idle out. Two `runserver` instances plus a `qcluster` and its workers is enough to exhaust the pool, after which every command dies at its first query with `FATAL: (EMAXCONNSESSION) max clients reached in session mode`.
+## The pooler ceiling is 15 sessions — keep CONN_MAX_AGE at 0
+`DATABASE_URL` points at Supabase's session-mode pooler, capped at `pool_size: 15`. Exceeding it gives `OperationalError: FATAL: (EMAXCONNSESSION) max clients reached in session mode` — on ordinary requests, with nothing else wrong with them.
 
-It does not clear on its own. Check for stale processes — `Get-CimInstance Win32_Process -Filter "Name like '%python%'"` shows start times, and a `runserver` from yesterday is the usual culprit. Killing a `runserver` frees its connections, but Supavisor takes a little while to reap the closed sessions, so a retry immediately afterwards can still fail.
+**`CONN_MAX_AGE` is 0 by default and should stay there while the session pooler is in front of the database.** It used to be 600, which is the right instinct for a normal Postgres and wrong here: `runserver` handles each request on its own thread, so every concurrent request takes a connection and then holds it for ten minutes. A few page loads — the app fires three to five requests each — exhausted the pool and the API began failing intermittently, which reads as flakiness rather than as a resource limit. Override with `DJANGO_CONN_MAX_AGE` only behind a deployment that has its own pool and does not go through the session pooler.
+
+Stale processes are the other half. The qcluster's ORM broker polls constantly so its connections never idle out, and a forgotten `runserver` holds its own. `Get-CimInstance Win32_Process -Filter "Name like '%python%'"` shows start times; a `runserver` from yesterday is the usual culprit. Killing one frees its connections, but Supavisor takes a moment to reap closed sessions, so an immediate retry can still fail.
+
+Killing a `runserver`'s **parent** orphans the child, which then cannot auto-reload and will serve stale code until it dies. Restart it properly rather than killing half the pair.
 
 This is the same pooler that strands `test_postgres` after a Postgres test run, and another reason to point `PSL_TEST_ON_POSTGRES` at a local instance.
+
+## Resetting a login password
+`manage.py reset_login_password <email>` sets a new password on any PSL login, facility or professional, and reports which record it belongs to.
+
+It is keyed on the **login** email — the address on the Supabase Auth account — and resolves email → auth account → whichever record carries that `supabase_user_id`. That indirection is not decoration: the sample facility's `contact_email` is `sample.home@example.com` while its owner signs in with a personal address, so any lookup keyed on the PSL record's own email finds nothing.
+
+`provision_professional_account --reset-password` still exists and is keyed on `Profile.email`; use it for professionals, and this one when the record is a facility or the two addresses differ.
 
 ## Caught IntegrityError needs its own savepoint
 Third occurrence in this project, so it is written down. `except IntegrityError` around a `save()` or `create()` **must** wrap it in a nested `transaction.atomic()`. Without the savepoint the failed statement poisons the surrounding transaction and every later query raises `TransactionManagementError` instead of the error you meant to return — the handler runs, but the recovery path inside it cannot touch the database. Bit `ShiftSwapRequestCreateView` (a 409 that never rendered), the compliance sweep (a collision that would have killed the run), and `provision_professional_account`.
