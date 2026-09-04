@@ -24,6 +24,11 @@ class Profile(models.Model):
     phone = models.CharField(max_length=32, blank=True)
     license_number = models.CharField(max_length=100)
     license_body = models.CharField(max_length=255)
+    license_expiry_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Drives the compliance sweep. Null means never checked.",
+    )
     supabase_user_id = models.UUIDField(
         unique=True,
         null=True,

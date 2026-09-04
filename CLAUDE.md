@@ -76,9 +76,23 @@ Added in Phase 1A:
 - **Phase 1A is complete.** All six done-criteria verified against live infrastructure. Next work is Phase 1B, and it is not started.
 - **Running it:** the web server alone is not enough — `manage.py qcluster` must run for imports, pushes and reminders. Register the reminder schedule once with `manage.py setup_shift_reminders`.
 - **After any system clock correction**, re-run `manage.py setup_shift_reminders`. `Schedule.next_run` is an absolute timestamp and does not self-heal: a clock that was running fast leaves the sweep stalled for the size of the correction, silently and with nothing logged.
-- **Not yet built:** Phase 1B (shift swap, leave application, compliance monitoring — see PSL_Phase1_Spec.md Section 7), Phase 2 (Jobs), Phase 3 (Academy), Phase 4 (Analytics).
+- **Phase 1B: in progress.** Steps 1–2 of PSL_Phase1B_Spec.md Section 7 are built: the `ShiftSwapRequest` model, `LeaveApplication` and `ComplianceAlert` models, `Profile.license_expiry_date`, and the four swap endpoints with the atomic-accept concurrency test. Steps 3–7 (leave endpoints, compliance task, frontend, isolation tests, end-to-end run) follow.
+- **Not yet built:** the rest of Phase 1B, Phase 2 (Jobs), Phase 3 (Academy), Phase 4 (Analytics).
 
 Do not start work on a phase beyond what's marked "in progress" or listed as current focus in a prompt, even if it seems like a natural next step. Ask before expanding scope.
+
+## Running the tests
+`python manage.py test` runs on a local SQLite file (`test-db.sqlite3`, gitignored), not `:memory:` — Django's in-memory SQLite uses shared-cache mode, which raises `SQLITE_LOCKED` on contention, and the busy timeout does not retry that error. It made the swap concurrency test fail about one run in three.
+
+SQLite still serialises writers, so it cannot demonstrate row-level concurrency at all. The genuine race is only proven on Postgres, via `PSL_TEST_ON_POSTGRES=1`. `rota/test_swaps.py::test_database_backend_under_test` records `connection.vendor` so a green SQLite run is never mistaken for the stronger guarantee.
+
+**Point `PSL_TEST_ON_POSTGRES` at a local Postgres, not at Supabase.** Running it against `DATABASE_URL` means `CREATE DATABASE test_postgres` on the production project, and teardown then fails — Supavisor, the connection pooler, keeps an idle session attached to the test database, and `DROP DATABASE` refuses while any session exists. That has now stranded a `test_postgres` database twice, each needing a manual `pg_terminate_backend` + `DROP` in the SQL editor. A local instance has no pooler in front of it, drops cleanly, and is far faster:
+
+```
+set PSL_TEST_ON_POSTGRES=1
+set DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
+python manage.py test rota.test_swaps
+```
 
 ## Resolved: legacy JWT secret rotation
 Was deferred pending Supabase Auth wiring (see git history for the original note). Resolved: bulk-import account provisioning uses `SUPABASE_SECRET_KEY` (the new `sb_secret_...` format, sent on the `apikey` header) rather than the legacy `service_role`/JWT-based key. Nothing in the backend depends on the legacy JWT secret. It can be revoked in the Supabase dashboard (JWT Signing Keys tab) whenever convenient — no code impact.

@@ -131,6 +131,8 @@ INSTALLED_APPS = [
     "facilities",
     "profiles",
     "rota",
+    "leave",
+    "compliance",
 ]
 
 MIDDLEWARE = [
@@ -184,9 +186,21 @@ DATABASES = {
 # Set PSL_TEST_ON_POSTGRES=1 to run the suite against DATABASE_URL instead.
 RUNNING_TESTS = "test" in sys.argv
 if RUNNING_TESTS and env("PSL_TEST_ON_POSTGRES", "0") != "1":
+    # File-based rather than :memory:. Django's in-memory SQLite runs in
+    # shared-cache mode, which takes table-level locks and raises SQLITE_LOCKED
+    # ("database table is locked") — an error the busy timeout does NOT retry,
+    # unlike SQLITE_BUSY. That made the swap concurrency test fail roughly one
+    # run in three. A file database uses ordinary file locking, which the
+    # timeout below does handle.
+    #
+    # Writers still serialise: SQLite cannot demonstrate row-level concurrency
+    # at all. The genuine race is proven with PSL_TEST_ON_POSTGRES=1.
+    _test_db = BASE_DIR / "test-db.sqlite3"
     DATABASES["default"] = {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": ":memory:",
+        "NAME": _test_db,
+        "OPTIONS": {"timeout": 30},
+        "TEST": {"NAME": _test_db},
     }
 
 if RUNNING_TESTS:

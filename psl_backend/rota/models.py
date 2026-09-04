@@ -45,3 +45,66 @@ class Shift(models.Model):
 
     def __str__(self):
         return f"{self.role} @ {self.start_time:%Y-%m-%d %H:%M}"
+
+
+class ShiftSwapRequest(models.Model):
+    """A professional offering their assigned shift to someone else.
+
+    Peer-to-peer: management sees the outcome but is not an approval gate.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ACCEPTED = "accepted", "Accepted"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+
+    shift = models.ForeignKey(
+        "rota.Shift", on_delete=models.CASCADE, related_name="swap_requests"
+    )
+    requesting_professional = models.ForeignKey(
+        "profiles.Profile",
+        related_name="swap_requests_made",
+        on_delete=models.CASCADE,
+    )
+    target_professional = models.ForeignKey(
+        "profiles.Profile",
+        null=True,
+        blank=True,
+        related_name="swap_requests_targeted",
+        on_delete=models.SET_NULL,
+        help_text="Null means open to anyone on the facility's roster.",
+    )
+    accepted_by = models.ForeignKey(
+        "profiles.Profile",
+        null=True,
+        blank=True,
+        related_name="swap_requests_accepted",
+        on_delete=models.SET_NULL,
+    )
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    history = HistoricalRecords(get_user=get_history_user)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # A shift can only be offered once at a time. Without this, a
+            # professional could open several pending requests on one shift and
+            # two different people could each "win" a different request.
+            models.UniqueConstraint(
+                fields=["shift"],
+                condition=models.Q(status="pending"),
+                name="one_pending_swap_per_shift",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "created_at"], name="swap_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"Swap for {self.shift} ({self.status})"

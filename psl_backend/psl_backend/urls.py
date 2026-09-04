@@ -18,7 +18,14 @@ from profiles.views import (
     ProfileSelfRegisterView,
     PushDeviceRegisterView,
 )
-from rota.views import PublishShiftsView, ShiftListCreateView
+from rota.views import (
+    PublishShiftsView,
+    ShiftListCreateView,
+    ShiftSwapRequestCreateView,
+    SwapRequestAcceptView,
+    SwapRequestCancelView,
+    SwapRequestListView,
+)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -76,6 +83,26 @@ urlpatterns = [
         "api/rota/shifts/publish/",
         PublishShiftsView.as_view(),
         name="rota-shifts-publish",
+    ),
+    path(
+        "api/rota/shifts/<int:shift_id>/swap-request/",
+        ShiftSwapRequestCreateView.as_view(),
+        name="rota-swap-request-create",
+    ),
+    path(
+        "api/rota/swap-requests/",
+        SwapRequestListView.as_view(),
+        name="rota-swap-requests",
+    ),
+    path(
+        "api/rota/swap-requests/<int:pk>/accept/",
+        SwapRequestAcceptView.as_view(),
+        name="rota-swap-request-accept",
+    ),
+    path(
+        "api/rota/swap-requests/<int:pk>/cancel/",
+        SwapRequestCancelView.as_view(),
+        name="rota-swap-request-cancel",
     ),
     # --- OpenAPI ---
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
