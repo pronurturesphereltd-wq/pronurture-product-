@@ -27,6 +27,7 @@ from core.supabase_admin import (
     create_user,
     find_user_by_email,
     is_configured,
+    set_user_password,
 )
 from profiles.models import Profile
 
@@ -58,6 +59,16 @@ class Command(BaseCommand):
                 "professional who will accept one needs this."
             ),
         )
+        parser.add_argument(
+            "--reset-password",
+            action="store_true",
+            help=(
+                "For a profile already linked to an account: set a new "
+                "password and confirm the email, rather than creating an "
+                "account. Use this on someone who was invited but never "
+                "activated, and so cannot sign in at all."
+            ),
+        )
 
     def handle(self, *args, **options):
         if not is_configured():
@@ -74,15 +85,26 @@ class Command(BaseCommand):
                 "to a profile that already exists; it does not create one."
             )
 
-        if profile.supabase_user_id:
+        resetting = options["reset_password"]
+
+        if resetting and not profile.supabase_user_id:
+            raise CommandError(
+                f"{profile.full_name} has no linked account, so there is no "
+                "password to reset. Run without --reset-password to create one."
+            )
+        if profile.supabase_user_id and not resetting:
             raise CommandError(
                 f"{profile.full_name} already has supabase_user_id "
-                f"{profile.supabase_user_id}. Clear it first if you mean to "
-                "re-link."
+                f"{profile.supabase_user_id}. Pass --reset-password to set a "
+                "new password on that account, or clear the field first if you "
+                "mean to re-link."
             )
 
         password = options["password"] or generate_password()
         generated = not options["password"]
+
+        if resetting:
+            return self.reset(profile, password, generated, options["role"])
 
         try:
             user_id = create_user(
@@ -144,6 +166,40 @@ class Command(BaseCommand):
                     else "Yours — it was not saved here."
                 )
             )
+        self.warn_if_roleless(profile)
+
+    def reset(self, profile, password, generated, role):
+        """Set a new password on the account already linked to this profile."""
+        try:
+            set_user_password(profile.supabase_user_id, password)
+        except SupabaseAdminError as exc:
+            raise CommandError(f"Could not set the password: {exc}")
+
+        if role:
+            profile.role = role
+            profile.save()
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Reset the password for {profile.full_name} <{profile.email}>"
+            )
+        )
+        self.stdout.write(f"  supabase_user_id: {profile.supabase_user_id}")
+        self.stdout.write(f"  role:             {profile.role or '(blank)'}")
+        self.stdout.write(
+            "  Email is now confirmed. An invited account that was never "
+            "activated has no password and an unconfirmed address, and fails "
+            "sign-in as 'invalid_credentials' either way."
+        )
+        self.stdout.write("")
+        self.stdout.write(self.style.WARNING("  password: " + password))
+        self.stdout.write(
+            "  Shown once and stored nowhere. "
+            + ("Generated — copy it now." if generated else "Yours — not saved here.")
+        )
+        self.warn_if_roleless(profile)
+
+    def warn_if_roleless(self, profile):
         if not profile.role:
             self.stdout.write("")
             self.stdout.write(

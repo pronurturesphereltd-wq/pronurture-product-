@@ -127,6 +127,44 @@ def create_user(email, password, user_metadata=None):
         raise SupabaseAdminError("Supabase Auth returned a non-JSON response.")
 
 
+def set_user_password(user_id, password):
+    """Set a password on an existing account and confirm its email.
+
+    An invited account has neither: the invite creates the user, and the
+    emailed link is where they would set a password and confirm the address.
+    If that email was throttled or never opened, the account exists but nobody
+    can sign in — `email_confirmed_at` and `last_sign_in_at` both null, and a
+    password attempt returning `invalid_credentials` rather than anything that
+    says why.
+
+    Confirming here as well as setting the password is deliberate. Setting only
+    the password leaves the address unconfirmed, and sign-in still fails, which
+    reads as a wrong password rather than the real cause.
+
+    Returns the Supabase user id.
+    """
+    url = f"{settings.SUPABASE_URL}/auth/v1/admin/users/{user_id}"
+    payload = {"password": password, "email_confirm": True}
+
+    try:
+        response = requests.put(
+            url, json=payload, headers=_headers(), timeout=TIMEOUT_SECONDS
+        )
+    except requests.RequestException as exc:
+        raise SupabaseAdminError(f"Could not reach Supabase Auth: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise SupabaseAdminError(
+            f"Supabase Auth returned {response.status_code} setting the "
+            f"password ({_safe_detail(response)})"
+        )
+
+    try:
+        return response.json().get("id")
+    except ValueError:
+        raise SupabaseAdminError("Supabase Auth returned a non-JSON response.")
+
+
 def find_user_by_email(email):
     """Return the Supabase user id for `email`, or None.
 

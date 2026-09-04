@@ -215,3 +215,110 @@ class PasswordGenerationTests(TestCase):
         combined = "".join(generate_password() for _ in range(50))
         for ambiguous in "lI1O0":
             self.assertNotIn(ambiguous, combined)
+
+
+@override_settings(SUPABASE_SECRET_KEY="sb_secret_test")
+class ResetPasswordTests(TestCase):
+    """--reset-password: for an account that exists but cannot sign in.
+
+    An invited professional who never opened the email has no password and an
+    unconfirmed address. Both failures present as `invalid_credentials`, so
+    the account looks fine from the outside and the profile looks correctly
+    linked. Nothing short of this gets them in.
+    """
+
+    def setUp(self):
+        self.facility = Facility.objects.create(
+            name="Oakwood",
+            registration_number="REG-1",
+            contact_email="oak@example.com",
+            status=Facility.Status.APPROVED,
+        )
+        self.profile = Profile.objects.create(
+            full_name="Amaka Nurse",
+            email="amaka@example.com",
+            license_number="NMC-1",
+            license_body="NMC",
+            role="A&E Nurse",
+            facility=self.facility,
+            supabase_user_id=EXISTING_SUB,
+            onboarding_path=Profile.OnboardingPath.BULK_IMPORT,
+        )
+
+    @mock.patch(
+        "profiles.management.commands.provision_professional_account.set_user_password",
+        return_value=EXISTING_SUB,
+    )
+    def test_sets_a_password_on_the_linked_account(self, set_password):
+        output = run("amaka@example.com", "--reset-password")
+
+        set_password.assert_called_once()
+        user_id, password = set_password.call_args.args
+        self.assertEqual(str(user_id), EXISTING_SUB)
+        self.assertIn(password, output)
+        self.assertIn("Reset the password", output)
+
+    @mock.patch(
+        "profiles.management.commands.provision_professional_account.create_user"
+    )
+    @mock.patch(
+        "profiles.management.commands.provision_professional_account.set_user_password",
+        return_value=EXISTING_SUB,
+    )
+    def test_does_not_create_a_second_account(self, set_password, create_user):
+        """The link must survive: creating a new account would orphan the
+        original and break any history already written against it."""
+        run("amaka@example.com", "--reset-password")
+
+        create_user.assert_not_called()
+        self.profile.refresh_from_db()
+        self.assertEqual(str(self.profile.supabase_user_id), EXISTING_SUB)
+
+    @mock.patch(
+        "profiles.management.commands.provision_professional_account.set_user_password",
+        return_value=EXISTING_SUB,
+    )
+    def test_can_set_the_role_at_the_same_time(self, set_password):
+        self.profile.role = ""
+        self.profile.save()
+        run("amaka@example.com", "--reset-password", "--role", "A&E Nurse")
+
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.role, "A&E Nurse")
+
+    @mock.patch(
+        "profiles.management.commands.provision_professional_account.set_user_password"
+    )
+    def test_refused_when_the_profile_has_no_account(self, set_password):
+        unlinked = Profile.objects.create(
+            full_name="Chidi Nurse",
+            email="chidi@example.com",
+            license_number="NMC-3",
+            license_body="NMC",
+            facility=self.facility,
+            onboarding_path=Profile.OnboardingPath.BULK_IMPORT,
+        )
+        with self.assertRaises(CommandError) as ctx:
+            run(unlinked.email, "--reset-password")
+        self.assertIn("no linked account", str(ctx.exception))
+        set_password.assert_not_called()
+
+    @mock.patch(
+        "profiles.management.commands.provision_professional_account.set_user_password",
+        side_effect=SupabaseAdminError("500 upstream"),
+    )
+    def test_failure_does_not_claim_success(self, set_password):
+        with self.assertRaises(CommandError) as ctx:
+            run("amaka@example.com", "--reset-password")
+        self.assertIn("Could not set the password", str(ctx.exception))
+
+    @mock.patch(
+        "profiles.management.commands.provision_professional_account.create_user"
+    )
+    def test_a_linked_profile_without_the_flag_is_still_refused(self, create_user):
+        """The guard that sent us here: without --reset-password this refuses
+        rather than silently provisioning a duplicate."""
+        with self.assertRaises(CommandError) as ctx:
+            run("amaka@example.com")
+        self.assertIn("--reset-password", str(ctx.exception))
+        create_user.assert_not_called()

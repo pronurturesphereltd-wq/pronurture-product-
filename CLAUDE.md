@@ -157,6 +157,15 @@ It calls `POST /auth/v1/admin/users` with `email_confirm: true` — without that
 
 It refuses to invent a Profile: an orphan auth account with nothing pointing at it is the worse outcome.
 
+`--reset-password` handles a different case: the profile is already linked, but the account cannot sign in. An invited professional who never opened the email has **no password and an unconfirmed address** — the invite creates the user, and the emailed link is where both would have been settled. Both failures report as `invalid_credentials`, so the account looks healthy from the outside and the profile looks correctly linked. The flag sets a password *and* confirms the email; setting only the password leaves sign-in failing for the other reason, which reads as a wrong password.
+
+## The pooler ceiling is 15 sessions, and dev processes hold them
+`DATABASE_URL` points at Supabase's session-mode pooler, capped at `pool_size: 15`. `conn_max_age=600` means every Django process holds its connections for ten minutes, and the qcluster's ORM broker polls constantly so its connections never idle out. Two `runserver` instances plus a `qcluster` and its workers is enough to exhaust the pool, after which every command dies at its first query with `FATAL: (EMAXCONNSESSION) max clients reached in session mode`.
+
+It does not clear on its own. Check for stale processes — `Get-CimInstance Win32_Process -Filter "Name like '%python%'"` shows start times, and a `runserver` from yesterday is the usual culprit. Killing a `runserver` frees its connections, but Supavisor takes a little while to reap the closed sessions, so a retry immediately afterwards can still fail.
+
+This is the same pooler that strands `test_postgres` after a Postgres test run, and another reason to point `PSL_TEST_ON_POSTGRES` at a local instance.
+
 ## Caught IntegrityError needs its own savepoint
 Third occurrence in this project, so it is written down. `except IntegrityError` around a `save()` or `create()` **must** wrap it in a nested `transaction.atomic()`. Without the savepoint the failed statement poisons the surrounding transaction and every later query raises `TransactionManagementError` instead of the error you meant to return — the handler runs, but the recovery path inside it cannot touch the database. Bit `ShiftSwapRequestCreateView` (a 409 that never rendered), the compliance sweep (a collision that would have killed the run), and `provision_professional_account`.
 
