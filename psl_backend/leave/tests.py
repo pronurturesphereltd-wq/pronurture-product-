@@ -245,6 +245,21 @@ class LeaveQueueTests(LeaveBase):
         self.authenticate(OAK_SUB)
         self.assertEqual(self.client.get(LIST_URL).data, [])
 
+    def test_professional_cannot_see_another_facilitys_applications(self):
+        """`professional=self` is narrower than facility scoping, so this
+        cannot leak — asserted anyway, because the day someone widens that
+        filter to the roster this is the test that catches it."""
+        self.submitted(professional=self.dana)  # Ivy's staff
+        self.authenticate(ALICE_SUB)
+        self.assertEqual(self.client.get(LIST_URL).data, [])
+
+    def test_status_filter_does_not_cross_the_facility_boundary(self):
+        """Filter ordering bug bait: the facility scope has to survive a
+        `?status=` narrowing rather than being replaced by it."""
+        self.submitted(professional=self.dana)  # Ivy's staff, submitted
+        self.authenticate(OAK_SUB)
+        self.assertEqual(self.client.get(f"{LIST_URL}?status=submitted").data, [])
+
     def test_status_filter(self):
         self.submitted(professional=self.alice)
         approved = self.submitted(
@@ -337,7 +352,7 @@ class LeaveDecisionTests(LeaveBase):
             self.client.post(self.approve_url()).status_code, status.HTTP_403_FORBIDDEN
         )
 
-    def test_another_facility_cannot_decide(self):
+    def test_another_facility_cannot_approve(self):
         self.authenticate(IVY_SUB)
         response = self.client.post(self.approve_url())
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -359,3 +374,40 @@ class LeaveDecisionTests(LeaveBase):
             self.client.post(self.approve_url(pk=999999)).status_code,
             status.HTTP_404_NOT_FOUND,
         )
+
+    # Decline is a separate route and a separate as_view(), so the isolation
+    # checks are repeated against it rather than assumed from the shared base.
+
+    def test_another_facility_cannot_decline(self):
+        self.authenticate(IVY_SUB)
+        response = self.client.post(self.decline_url())
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        self.application.refresh_from_db()
+        self.assertEqual(self.application.status, LeaveApplication.Status.SUBMITTED)
+
+    def test_professional_cannot_decline(self):
+        self.authenticate(ALICE_SUB)
+        self.assertEqual(
+            self.client.post(self.decline_url()).status_code, status.HTTP_403_FORBIDDEN
+        )
+
+    def test_another_facilitys_application_looks_like_a_missing_one(self):
+        """Same reasoning as the swap endpoint: if a foreign id answered
+        differently from an absent one, the difference would enumerate every
+        leave application on the platform."""
+        self.authenticate(IVY_SUB)
+        foreign = self.client.post(self.approve_url())
+        missing = self.client.post(self.approve_url(pk=999999))
+        self.assertEqual(foreign.status_code, missing.status_code)
+        self.assertEqual(foreign.data, missing.data)
+
+    def test_colleague_cannot_decide_another_professionals_leave(self):
+        """Not just a foreign facility — a peer on the same roster has no
+        decision rights either."""
+        self.authenticate(BOB_SUB)
+        self.assertEqual(
+            self.client.post(self.approve_url()).status_code, status.HTTP_403_FORBIDDEN
+        )
+        self.application.refresh_from_db()
+        self.assertEqual(self.application.status, LeaveApplication.Status.SUBMITTED)

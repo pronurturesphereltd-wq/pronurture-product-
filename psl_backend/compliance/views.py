@@ -8,7 +8,6 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -59,11 +58,15 @@ class ComplianceAlertResolveView(APIView):
         summary="Resolve an alert",
     )
     def post(self, request, pk):
+        # Scoped in the lookup, not checked afterwards: a custom "no such
+        # alert" message differs from the one get_object_or_404 raises for a
+        # missing id, and that difference is enough to enumerate alerts across
+        # every facility. Both cases now answer identically.
         alert = get_object_or_404(
-            ComplianceAlert.objects.select_related("profile"), pk=pk
+            ComplianceAlert.objects.select_related("profile"),
+            pk=pk,
+            profile__facility_id=request.facility.id,
         )
-        if alert.profile.facility_id != request.facility.id:
-            raise NotFound("No such compliance alert.")
 
         resolved = ComplianceAlert.objects.filter(
             pk=pk, status=ComplianceAlert.Status.OPEN

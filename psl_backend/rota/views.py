@@ -5,7 +5,7 @@ from django.utils import timezone
 from django_q.tasks import async_task
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -128,10 +128,17 @@ class ShiftSwapRequestCreateView(APIView):
     )
     def post(self, request, shift_id):
         profile = request.profile
-        shift = get_object_or_404(Shift, pk=shift_id)
 
-        # Only the assignee may offer the shift, which also scopes this to the
-        # caller's own facility without a separate check.
+        # Scoped to the caller's own facility, so a shift belonging to another
+        # one is indistinguishable from a shift that does not exist. An
+        # unscoped lookup answered 403 "you are not assigned to that shift" for
+        # a real id and 404 for a missing one, which let anyone with a Supabase
+        # account enumerate shift ids across every facility on the platform.
+        # Every other cross-tenant path here answers 404; this one now matches.
+        shift = get_object_or_404(Shift, pk=shift_id, facility_id=profile.facility_id)
+
+        # Only the assignee may offer the shift. Within the caller's own
+        # facility a 403 is fine — a colleague already sees that rota.
         if shift.professional_id != profile.id:
             raise PermissionDenied("You are not assigned to that shift.")
         if not shift.is_published:
@@ -248,21 +255,24 @@ class SwapRequestAcceptView(APIView):
     def post(self, request, pk):
         profile = request.profile
 
+        # Both scoping rules live in the lookup rather than in checks after it.
+        # A custom "no such swap request" message differs from the phrasing
+        # get_object_or_404 uses for a missing id, and comparing the two would
+        # enumerate swap requests across every facility. Folding them in makes
+        # a foreign request, a request aimed at someone else, and a request
+        # that never existed all answer identically.
         swap = get_object_or_404(
-            ShiftSwapRequest.objects.select_related("shift"), pk=pk
+            ShiftSwapRequest.objects.select_related("shift"),
+            Q(target_professional__isnull=True) | Q(target_professional=profile),
+            pk=pk,
+            shift__facility_id=profile.facility_id,
         )
-        if swap.shift.facility_id != profile.facility_id:
-            raise NotFound("No such swap request.")
         if swap.requesting_professional_id == profile.id:
+            # Not hidden: you already know your own request exists.
             return Response(
                 {"detail": "You cannot accept your own swap request."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if (
-            swap.target_professional_id is not None
-            and swap.target_professional_id != profile.id
-        ):
-            raise NotFound("No such swap request.")
 
         now = timezone.now()
         with transaction.atomic():
@@ -308,10 +318,12 @@ class SwapRequestCancelView(APIView):
     def post(self, request, pk):
         profile = request.profile
         swap = get_object_or_404(
-            ShiftSwapRequest.objects.select_related("shift"), pk=pk
+            ShiftSwapRequest.objects.select_related("shift"),
+            pk=pk,
+            shift__facility_id=profile.facility_id,
         )
-        if swap.shift.facility_id != profile.facility_id:
-            raise NotFound("No such swap request.")
+        # Intra-facility, so a 403 is fine here: a colleague can already see
+        # this request in the list.
         if swap.requesting_professional_id != profile.id:
             raise PermissionDenied("Only the requester can cancel this.")
 

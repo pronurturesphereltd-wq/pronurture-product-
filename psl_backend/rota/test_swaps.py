@@ -416,6 +416,48 @@ class SwapFacilityIsolationTests(SupabaseAuthMixin, APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_accept_gives_a_foreign_request_the_missing_one_answer(self):
+        self.authenticate(OUTSIDER_SUB)
+        foreign = self.client.post(
+            f"/api/rota/swap-requests/{self.swap.id}/accept/", {}, format="json"
+        )
+        missing = self.client.post(
+            "/api/rota/swap-requests/999999/accept/", {}, format="json"
+        )
+        self.assertEqual(foreign.status_code, missing.status_code)
+        self.assertEqual(foreign.data, missing.data)
+
+    def test_cancel_gives_a_foreign_request_the_missing_one_answer(self):
+        self.authenticate(OUTSIDER_SUB)
+        foreign = self.client.post(
+            f"/api/rota/swap-requests/{self.swap.id}/cancel/", {}, format="json"
+        )
+        missing = self.client.post(
+            "/api/rota/swap-requests/999999/cancel/", {}, format="json"
+        )
+        self.assertEqual(foreign.status_code, missing.status_code)
+        self.assertEqual(foreign.data, missing.data)
+
+    def test_a_targeted_request_is_hidden_the_same_way(self):
+        """Intra-facility privacy uses the same mechanism: a colleague offered
+        a shift they were not named for cannot tell the request apart from one
+        that does not exist."""
+        bob = make_profile(self.facility, "Bob", "bob@example.com", BOB_SUB)
+        carla = make_profile(self.facility, "Carla", "carla@example.com", CARLA_SUB)
+        self.swap.target_professional = carla
+        self.swap.save()
+
+        self.authenticate(BOB_SUB)
+        targeted = self.client.post(
+            f"/api/rota/swap-requests/{self.swap.id}/accept/", {}, format="json"
+        )
+        missing = self.client.post(
+            "/api/rota/swap-requests/999999/accept/", {}, format="json"
+        )
+        self.assertEqual(targeted.status_code, missing.status_code)
+        self.assertEqual(targeted.data, missing.data)
+        self.assertEqual(bob.swap_requests_accepted.count(), 0)
+
     def test_cannot_target_another_facilitys_professional(self):
         self.swap.delete()
         self.authenticate(ALICE_SUB)
@@ -425,6 +467,62 @@ class SwapFacilityIsolationTests(SupabaseAuthMixin, APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_outsider_cannot_open_a_request_on_this_facilitys_shift(self):
+        self.swap.delete()
+        self.authenticate(OUTSIDER_SUB)
+        response = self.client.post(
+            f"/api/rota/shifts/{self.shift.id}/swap-request/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(ShiftSwapRequest.objects.exists())
+
+    def test_another_facilitys_shift_looks_exactly_like_a_missing_one(self):
+        """The two answers have to be identical, or the difference between
+        them is an oracle: anyone with a Supabase account could walk shift ids
+        and learn which exist across every facility on the platform. This is
+        what the endpoint used to do — 403 for a real id, 404 for a missing
+        one — and it is why the lookup is scoped rather than checked after.
+        """
+        self.authenticate(OUTSIDER_SUB)
+        real = self.client.post(
+            f"/api/rota/shifts/{self.shift.id}/swap-request/", {}, format="json"
+        )
+        missing = self.client.post(
+            "/api/rota/shifts/999999/swap-request/", {}, format="json"
+        )
+        self.assertEqual(real.status_code, missing.status_code)
+        self.assertEqual(real.data, missing.data)
+
+    def test_facility_cannot_open_a_swap_request(self):
+        """Offering a shift is the assignee's decision, not management's."""
+        self.facility.supabase_user_id = FACILITY_SUB
+        self.facility.save()
+        self.swap.delete()
+        self.authenticate(FACILITY_SUB)
+        response = self.client.post(
+            f"/api/rota/shifts/{self.shift.id}/swap-request/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(ShiftSwapRequest.objects.exists())
+
+    def test_professional_with_no_facility_cannot_open_a_request(self):
+        """`facility_id=None` must match no shift rather than every shift whose
+        facility is null — there are none, but the scoping should not depend on
+        that being true."""
+        nomad = Profile.objects.create(
+            full_name="Nomad",
+            email="nomad@example.com",
+            license_number="NMC-N",
+            license_body="NMC",
+            supabase_user_id="99999999-0000-4000-8000-000000000099",
+        )
+        self.assertIsNone(nomad.facility_id)
+        self.authenticate("99999999-0000-4000-8000-000000000099")
+        response = self.client.post(
+            f"/api/rota/shifts/{self.shift.id}/swap-request/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
 class SwapAcceptConcurrencyTests(TransactionTestCase):

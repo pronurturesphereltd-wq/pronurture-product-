@@ -4,7 +4,7 @@ from django.utils import timezone
 from django_q.tasks import async_task
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -121,14 +121,16 @@ class LeaveDecisionView(APIView):
     decision = None
 
     def post(self, request, pk):
+        # Scoped in the lookup itself rather than checked afterwards. A custom
+        # "no such application" message is still an oracle: it differs from the
+        # phrasing get_object_or_404 uses for an id that does not exist, so a
+        # caller comparing bodies could enumerate every leave application on
+        # the platform. Filtering here makes both cases the same 404.
         application = get_object_or_404(
-            LeaveApplication.objects.select_related("professional"), pk=pk
+            LeaveApplication.objects.select_related("professional"),
+            pk=pk,
+            professional__facility_id=request.facility.id,
         )
-        # Scoped by the applicant's facility: another facility's leave queue is
-        # not this caller's business, and a wrong id is "not found" rather than
-        # confirming the row exists.
-        if application.professional.facility_id != request.facility.id:
-            raise NotFound("No such leave application.")
 
         now = timezone.now()
         with transaction.atomic():

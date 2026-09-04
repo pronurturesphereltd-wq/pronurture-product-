@@ -337,6 +337,31 @@ class ComplianceEndpointTests(APITestCase):
         self.authenticate(OAK_SUB)
         self.assertEqual(self.client.get(LIST_URL).data[0]["days_until_due"], -3)
 
+    def test_professional_cannot_resolve_an_alert(self):
+        """The list is professional-proof; assert the write path is too."""
+        self.authenticate(ALICE_SUB)
+        response = self.client.post(self.resolve_url())
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.alert.refresh_from_db()
+        self.assertEqual(self.alert.status, ComplianceAlert.Status.OPEN)
+
+    def test_another_facilitys_alert_looks_like_a_missing_one(self):
+        """A foreign id and an absent id have to answer identically, or the
+        difference enumerates every alert on the platform."""
+        self.authenticate(OAK_SUB)
+        foreign = self.client.post(self.resolve_url(pk=self.ivy_alert.id))
+        missing = self.client.post(self.resolve_url(pk=999999))
+        self.assertEqual(foreign.status_code, missing.status_code)
+        self.assertEqual(foreign.data, missing.data)
+
+    def test_status_all_does_not_cross_the_facility_boundary(self):
+        """Filter ordering bug bait: `?status=all` skips the status filter, so
+        the facility scope has to be applied independently of it."""
+        self.authenticate(OAK_SUB)
+        rows = self.client.get(f"{LIST_URL}?status=all").data
+        self.assertEqual([row["professional_name"] for row in rows], ["Alice"])
+
     def test_unapproved_facility_is_denied(self):
         self.oakwood.status = Facility.Status.SUSPENDED
         self.oakwood.save()
