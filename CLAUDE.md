@@ -114,6 +114,16 @@ Pages: `/rota`, `/import`, `/compliance` are facility-only. `/me` is professiona
 
 Note this is a testing convenience as much as a product decision. The Phase 1B spec routes the professional experience to "the eventual mobile app" (§3), and `/me` is deliberately minimal — enough to drive the swap and leave loops through a UI rather than curl.
 
+## A shift that has started cannot be swapped, at either end
+Opening a swap has always refused a started shift. Two gaps around that, both found from one bug report:
+
+1. `/me` rendered "Offer for swap" on **every** assigned shift, including ones already finished. The row looked actionable and the API refused it — the page contradicting itself. Upcoming and past shifts are now separate tables and only upcoming ones carry a button.
+2. **Accepting** never checked `start_time` at all. An offer opened in good time sits pending indefinitely — nothing expires it — so a shift could be claimed hours after it began, reassigning it retroactively and taking the original assignee off a shift they may have worked. Acceptance now refuses with 400, and the UI hides stale offers.
+
+The general rule: when the API refuses an action under some condition, the UI must not offer it under that condition. Both halves need the check — the UI so the control is absent, the API because the UI is not a security boundary.
+
+Related React detail: **do not read the clock during render.** `Date.now()` in a component body is impure, eslint rejects it, and it drifts between renders for no reason the data reflects. `/me` captures "now" when data is fetched and compares against that.
+
 ## Role guardrail on shift swaps
 A patient-safety rule, so it is enforced server-side: a professional cannot accept a swap for a role they are not designated for. `Profile.role` is the operational designation ("ENT Registrar", "A&E Nurse") — facility-controlled information, distinct from the licence fields PSL verifies, and set in Django Admin like `license_expiry_date`. `Shift.ward` exists now too and is **purely informational; it never gates anything**.
 

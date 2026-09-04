@@ -710,3 +710,80 @@ class ProfessionalShiftListTests(SupabaseAuthMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.draft.refresh_from_db()
         self.assertFalse(self.draft.is_published)
+
+
+@override_settings(
+    SUPABASE_JWT_ISSUER=ISSUER,
+    SUPABASE_JWT_AUDIENCE=AUDIENCE,
+    SUPABASE_JWT_LEEWAY_SECONDS=10,
+)
+class StaleSwapTests(SupabaseAuthMixin, APITestCase):
+    """A pending offer whose shift has since begun.
+
+    Opening a swap refuses a started shift, but an offer opened in good time
+    can sit pending until the shift starts. Nothing expires it, so without a
+    check on acceptance the shift stays claimable while it is being worked.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.facility = make_facility()
+        self.alice = make_profile(self.facility, "Alice", "alice@example.com", ALICE_SUB)
+        self.bob = make_profile(self.facility, "Bob", "bob@example.com", BOB_SUB)
+
+        # Opened while the shift was still ahead, then time passed.
+        self.shift = make_shift(self.facility, self.alice, days_ahead=-1)
+        self.swap = ShiftSwapRequest.objects.create(
+            shift=self.shift, requesting_professional=self.alice
+        )
+
+    def accept(self):
+        self.authenticate(BOB_SUB)
+        return self.client.post(
+            f"/api/rota/swap-requests/{self.swap.id}/accept/", {}, format="json"
+        )
+
+    def test_cannot_accept_a_swap_whose_shift_has_started(self):
+        response = self.accept()
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already started", response.data["detail"])
+
+    def test_the_original_assignee_keeps_the_shift(self):
+        """The failure that matters: reassigning a shift already underway
+        would take the original assignee off one they may have worked."""
+        self.accept()
+
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.professional, self.alice)
+
+    def test_the_request_is_not_consumed(self):
+        self.accept()
+
+        self.swap.refresh_from_db()
+        self.assertEqual(self.swap.status, ShiftSwapRequest.Status.PENDING)
+        self.assertIsNone(self.swap.accepted_by)
+
+    def test_a_future_shift_is_still_acceptable(self):
+        """The guard must not catch the ordinary case."""
+        future = make_shift(self.facility, self.alice, days_ahead=3)
+        swap = ShiftSwapRequest.objects.create(
+            shift=future, requesting_professional=self.alice
+        )
+        self.authenticate(BOB_SUB)
+        response = self.client.post(
+            f"/api/rota/swap-requests/{swap.id}/accept/", {}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        future.refresh_from_db()
+        self.assertEqual(future.professional, self.bob)
+
+    def test_the_requester_can_still_withdraw_it(self):
+        """Cancelling a stale offer is how it gets tidied up, so that path
+        stays open."""
+        self.authenticate(ALICE_SUB)
+        response = self.client.post(
+            f"/api/rota/swap-requests/{self.swap.id}/cancel/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)

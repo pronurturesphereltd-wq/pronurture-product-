@@ -67,6 +67,11 @@ function ProfessionalView({ identity }: { identity: Identity }) {
   const [swaps, setSwaps] = useState<Swap[]>([]);
   const [leave, setLeave] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
+  // "Now" as of the last fetch, not as of this render. Reading the clock
+  // during render is impure — it changes between renders for no reason the
+  // data reflects — and eslint rejects it. Every action refetches, so this
+  // stays current with what the server would decide.
+  const [asOf, setAsOf] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -87,6 +92,7 @@ function ProfessionalView({ identity }: { identity: Identity }) {
     setShifts(shiftRows);
     setSwaps(swapRows);
     setLeave(leaveRows);
+    setAsOf(Date.now());
   }, []);
 
   useEffect(() => {
@@ -164,8 +170,21 @@ function ProfessionalView({ identity }: { identity: Identity }) {
   const openOfferFor = (shiftId: number) =>
     swaps.find((s) => s.shift === shiftId && s.status === "pending");
 
+  // Split on the same rule the API enforces. Offering a shift that has already
+  // started is refused server-side, so rendering the button on one is showing
+  // an action that cannot work — which is exactly how this page contradicted
+  // itself on a shift that had finished hours earlier.
+  const upcoming = shifts.filter((s) => new Date(s.start_time).getTime() > asOf);
+  const past = shifts.filter((s) => new Date(s.start_time).getTime() <= asOf);
+
+  // Same rule again: a pending offer whose shift has begun can no longer be
+  // accepted, so it is not shown as acceptable. Nothing expires these
+  // server-side — they stay pending until someone withdraws them.
   const offersFromOthers = swaps.filter(
-    (s) => s.status === "pending" && s.requesting_professional !== me.id,
+    (s) =>
+      s.status === "pending" &&
+      s.requesting_professional !== me.id &&
+      new Date(s.shift_start_time).getTime() > asOf,
   );
   const myHistory = swaps.filter((s) => s.status !== "pending");
 
@@ -188,15 +207,16 @@ function ProfessionalView({ identity }: { identity: Identity }) {
         </div>
       )}
 
-      <h2>Assigned to me</h2>
+      <h2>Coming up</h2>
       {loading && <p className="sub">Loading…</p>}
-      {!loading && shifts.length === 0 && (
+      {!loading && upcoming.length === 0 && (
         <p className="sub">
-          No published shifts. Draft shifts are not shown until your facility
-          publishes them.
+          No upcoming shifts.
+          {past.length > 0 && " Your past shifts are below."} Draft shifts are
+          not shown until your facility publishes them.
         </p>
       )}
-      {shifts.length > 0 && (
+      {upcoming.length > 0 && (
         <table>
           <thead>
             <tr>
@@ -208,7 +228,7 @@ function ProfessionalView({ identity }: { identity: Identity }) {
             </tr>
           </thead>
           <tbody>
-            {shifts.map((shift) => {
+            {upcoming.map((shift) => {
               const offered = openOfferFor(shift.id);
               return (
                 <tr key={shift.id}>
@@ -240,6 +260,36 @@ function ProfessionalView({ identity }: { identity: Identity }) {
             })}
           </tbody>
         </table>
+      )}
+
+      {past.length > 0 && (
+        <>
+          <h3>Already started or finished</h3>
+          <p className="sub">
+            These cannot be offered for swap — the API refuses a shift that has
+            started, so no button is shown rather than one that would fail.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Role</th>
+                <th scope="col">Ward</th>
+                <th scope="col">Started</th>
+                <th scope="col">Ended</th>
+              </tr>
+            </thead>
+            <tbody>
+              {past.map((shift) => (
+                <tr key={shift.id}>
+                  <td>{shift.role}</td>
+                  <td>{shift.ward || <span className="sub">—</span>}</td>
+                  <td>{formatWhen(shift.start_time)}</td>
+                  <td>{formatWhen(shift.end_time)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
 
       <h2>Shifts offered by colleagues</h2>

@@ -310,6 +310,22 @@ class SwapRequestAcceptView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Opening a swap refuses a shift that has already started, but a
+        # request opened in good time can sit pending until the shift begins.
+        # Without this, someone could claim a shift already underway an hour
+        # after it started, reassigning it retroactively and letting the
+        # original assignee off a shift they may well have worked.
+        if swap.shift.start_time <= timezone.now():
+            return Response(
+                {
+                    "detail": (
+                        "That shift has already started, so it can no longer "
+                        "be swapped."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # The role guardrail, checked before the claim rather than after it.
         # Order is the whole point: the claim is a one-way door — it flips the
         # request to accepted and there is no un-accept — so a mismatched
