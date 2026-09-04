@@ -11,9 +11,12 @@ from rest_framework.views import APIView
 
 from core.permissions import IsFacility, IsFacilityOrProfessional, IsProfessional
 
+from profiles.models import Profile
+
 from .models import Shift, ShiftSwapRequest
 from .roles import role_matches
 from .serializers import (
+    EligibleColleagueSerializer,
     PublishShiftsSerializer,
     ShiftSerializer,
     ShiftSwapRequestSerializer,
@@ -190,7 +193,11 @@ class ShiftSwapRequestCreateView(APIView):
 
         serializer = ShiftSwapRequestSerializer(
             data=request.data,
-            context={"facility": shift.facility, "requester": profile},
+            context={
+                "facility": shift.facility,
+                "requester": profile,
+                "shift": shift,
+            },
         )
         serializer.is_valid(raise_exception=True)
 
@@ -221,11 +228,51 @@ class ShiftSwapRequestCreateView(APIView):
         )
 
 
+class EligibleColleaguesView(APIView):
+    """Who this shift may be offered to.
+
+    Every offer names someone, so the frontend needs a list to pick from.
+    `/api/facilities/staff/` cannot serve this — it is facility-only and
+    answers 403 for a professional's token.
+
+    Eligibility is the acceptance rule read forwards: same facility, role
+    matching the shift exactly, and not the requester. Offering to someone the
+    guardrail would then refuse is a dead end worth closing here.
+    """
+
+    permission_classes = [IsProfessional]
+
+    @extend_schema(
+        responses={200: EligibleColleagueSerializer(many=True)},
+        summary="Colleagues this shift can be offered to",
+    )
+    def get(self, request, shift_id):
+        profile = request.profile
+        # Scoped like the create endpoint, so another facility's shift is
+        # indistinguishable from one that does not exist.
+        shift = get_object_or_404(Shift, pk=shift_id, facility_id=profile.facility_id)
+        if shift.professional_id != profile.id:
+            raise PermissionDenied("You are not assigned to that shift.")
+
+        roster = (
+            Profile.objects.filter(facility_id=profile.facility_id)
+            .exclude(pk=profile.pk)
+            .order_by("full_name")
+        )
+        # Matched in Python rather than SQL so it is the same comparison the
+        # guardrail makes — case-insensitive and whitespace-collapsing. An
+        # `iexact` filter would quietly disagree about "ENT  Registrar", and a
+        # list that disagrees with the rule is worse than no list.
+        eligible = [p for p in roster if role_matches(p.role, shift.role)]
+        return Response(EligibleColleagueSerializer(eligible, many=True).data)
+
+
 class SwapRequestListView(APIView):
     """Swap requests, read by either side.
 
-    A professional sees what they could act on: open offers to the whole
-    roster, offers aimed at them, and their own requests whatever the status.
+    A professional sees offers aimed at them, and their own requests whatever
+    the status. Nothing else — an offer made to a named colleague is not the
+    rest of the roster's business, which is the whole point of targeting.
 
     A facility sees every swap on its own shifts. Per the spec this is
     visibility, not an approval gate — swaps are peer-to-peer and complete
@@ -258,14 +305,16 @@ class SwapRequestListView(APIView):
             queryset = queryset.filter(status=requested_status)
 
         if facility is None:
-            # A request aimed at one person is not the rest of the roster's
-            # business. The facility is not "the rest of the roster" — it owns
-            # the shift, so this narrowing applies to peers only.
+            # Narrowed to peers only — the facility owns the shift and is not
+            # a peer, so it still sees everything on its own rota.
+            #
+            # There is no untargeted branch any more. Legacy offers created
+            # before targeting became mandatory have a null target and are
+            # therefore visible only to whoever made them, which is the right
+            # outcome: nobody can accept them, so nobody else needs to see them.
             profile = request.profile
             queryset = queryset.filter(
-                Q(target_professional__isnull=True)
-                | Q(target_professional=profile)
-                | Q(requesting_professional=profile)
+                Q(target_professional=profile) | Q(requesting_professional=profile)
             )
         return Response(ShiftSwapRequestSerializer(queryset, many=True).data)
 
@@ -297,9 +346,12 @@ class SwapRequestAcceptView(APIView):
         # enumerate swap requests across every facility. Folding them in makes
         # a foreign request, a request aimed at someone else, and a request
         # that never existed all answer identically.
+        #
+        # The requester is admitted so they get a straight answer about their
+        # own offer rather than a 404 about a row they created.
         swap = get_object_or_404(
             ShiftSwapRequest.objects.select_related("shift"),
-            Q(target_professional__isnull=True) | Q(target_professional=profile),
+            Q(target_professional=profile) | Q(requesting_professional=profile),
             pk=pk,
             shift__facility_id=profile.facility_id,
         )
@@ -344,8 +396,14 @@ class SwapRequestAcceptView(APIView):
 
         now = timezone.now()
         with transaction.atomic():
+            # `target_professional` is part of the claim, not a check before
+            # it. Baked into the one-way door, the database itself refuses to
+            # hand the shift to anyone but the named colleague — there is no
+            # window between checking and claiming for that to be true in.
             claimed = ShiftSwapRequest.objects.filter(
-                pk=pk, status=ShiftSwapRequest.Status.PENDING
+                pk=pk,
+                status=ShiftSwapRequest.Status.PENDING,
+                target_professional=profile,
             ).update(
                 status=ShiftSwapRequest.Status.ACCEPTED,
                 accepted_by=profile,

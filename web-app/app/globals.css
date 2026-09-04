@@ -314,3 +314,17 @@ label.inline input {
   border-color: transparent;
   color: var(--err-fg);
 }
+
+/* Visually hidden but available to screen readers — the offer picker's select
+   needs a label without a visible one crowding the table cell. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

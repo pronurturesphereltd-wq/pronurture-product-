@@ -3,6 +3,23 @@ from rest_framework import serializers
 from profiles.models import Profile
 
 from .models import Shift, ShiftSwapRequest
+from .roles import role_matches
+
+
+class EligibleColleagueSerializer(serializers.Serializer):
+    """Someone a shift may be offered to.
+
+    Read by a colleague rather than by the facility, so it is narrower than
+    FacilityStaffSerializer: enough to pick a person from a list, and nothing
+    about their licence or contact details beyond the address the roster
+    already shows.
+    """
+
+    id = serializers.IntegerField(read_only=True)
+    full_name = serializers.CharField(read_only=True)
+    email = serializers.EmailField(read_only=True)
+    role = serializers.CharField(read_only=True)
+    verification_state = serializers.CharField(read_only=True)
 
 
 class ShiftSerializer(serializers.ModelSerializer):
@@ -129,4 +146,27 @@ class ShiftSwapRequestSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "You cannot offer a shift to yourself."
             )
+        # Re-checked here even though the eligible-colleagues endpoint only
+        # offers matching roles. The API is the boundary, not the UI: nothing
+        # stops a caller naming any id, and the guardrail exists to keep a
+        # general nurse off an ENT Registrar's shift.
+        shift = self.context["shift"]
+        if not role_matches(value.role, shift.role):
+            raise serializers.ValidationError(
+                f"{value.full_name} is not designated '{shift.role}'"
+                + (f" (they are '{value.role}')." if value.role else " (no role set).")
+            )
         return value
+
+    def validate(self, attrs):
+        """Every offer names someone. Open offers are gone: a shift left for
+        whoever grabs it first is exactly what this rule removes."""
+        if not attrs.get("target_professional"):
+            raise serializers.ValidationError(
+                {
+                    "target_professional": (
+                        "You must choose a colleague to offer this shift to."
+                    )
+                }
+            )
+        return attrs

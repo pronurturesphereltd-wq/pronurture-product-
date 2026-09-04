@@ -108,12 +108,39 @@ class SwapRequestFlowTests(SupabaseAuthMixin, APITestCase):
 
     def test_assignee_can_open_a_request(self):
         self.authenticate(ALICE_SUB)
-        response = self.client.post(self.create_url(), {}, format="json")
+        response = self.client.post(
+            self.create_url(), {"target_professional": self.bob.id}, format="json"
+        )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         swap = ShiftSwapRequest.objects.get()
         self.assertEqual(swap.requesting_professional, self.alice)
         self.assertEqual(swap.status, ShiftSwapRequest.Status.PENDING)
-        self.assertIsNone(swap.target_professional)
+        self.assertEqual(swap.target_professional, self.bob)
+
+    def test_an_offer_must_name_a_colleague(self):
+        """The rule this addendum exists for: no open offers, so a shift is
+        never left for whoever grabs it first."""
+        self.authenticate(ALICE_SUB)
+        response = self.client.post(self.create_url(), {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("target_professional", response.data)
+        self.assertFalse(ShiftSwapRequest.objects.exists())
+
+    def test_cannot_offer_to_someone_whose_role_does_not_match(self):
+        """Redundant with the eligible-colleagues list, and kept anyway: the
+        API is the boundary, not the UI. Nothing stops a caller naming any
+        id, and the guardrail would only refuse them at acceptance."""
+        midwife = make_profile(
+            self.facility, "Mide", "mide@example.com", CARLA_SUB, role="Midwife"
+        )
+        self.authenticate(ALICE_SUB)
+        response = self.client.post(
+            self.create_url(), {"target_professional": midwife.id}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(ShiftSwapRequest.objects.exists())
 
     def test_non_assignee_cannot_open_a_request(self):
         self.authenticate(BOB_SUB)
@@ -137,18 +164,20 @@ class SwapRequestFlowTests(SupabaseAuthMixin, APITestCase):
         """Two open requests on one shift could each be accepted by a
         different person, double-booking it."""
         self.authenticate(ALICE_SUB)
-        self.client.post(self.create_url(), {}, format="json")
-        response = self.client.post(self.create_url(), {}, format="json")
+        body = {"target_professional": self.bob.id}
+        self.client.post(self.create_url(), body, format="json")
+        response = self.client.post(self.create_url(), body, format="json")
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertEqual(ShiftSwapRequest.objects.count(), 1)
 
     def test_can_reopen_after_cancelling(self):
         self.authenticate(ALICE_SUB)
-        first = self.client.post(self.create_url(), {}, format="json").data
+        body = {"target_professional": self.bob.id}
+        first = self.client.post(self.create_url(), body, format="json").data
         self.client.post(
             f"/api/rota/swap-requests/{first['id']}/cancel/", {}, format="json"
         )
-        response = self.client.post(self.create_url(), {}, format="json")
+        response = self.client.post(self.create_url(), body, format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_cannot_target_yourself(self):
@@ -161,10 +190,12 @@ class SwapRequestFlowTests(SupabaseAuthMixin, APITestCase):
     # --- accepting ----------------------------------------------------
 
     def open_swap(self, target=None):
+        """Offers name Bob unless a test says otherwise. Untargeted offers no
+        longer exist."""
         return ShiftSwapRequest.objects.create(
             shift=self.shift,
             requesting_professional=self.alice,
-            target_professional=target,
+            target_professional=target or self.bob,
         )
 
     def test_accept_reassigns_the_shift(self):
@@ -206,9 +237,9 @@ class SwapRequestFlowTests(SupabaseAuthMixin, APITestCase):
         self.client.post(
             f"/api/rota/swap-requests/{swap.id}/accept/", {}, format="json"
         )
-        carla = make_profile(self.facility, "Carla", "carla@example.com", CARLA_SUB)
-        self.assertIsNotNone(carla)
-        self.authenticate(CARLA_SUB)
+        # The target asking twice — a double-click, or two devices. A
+        # bystander would now get 404 instead, since a targeted offer is
+        # invisible to them; that is asserted separately.
         response = self.client.post(
             f"/api/rota/swap-requests/{swap.id}/accept/", {}, format="json"
         )
@@ -259,7 +290,7 @@ class SwapRequestFlowTests(SupabaseAuthMixin, APITestCase):
 
     # --- listing ------------------------------------------------------
 
-    def test_list_shows_open_requests_at_this_facility(self):
+    def test_the_named_target_sees_the_offer(self):
         self.open_swap()
         self.authenticate(BOB_SUB)
         response = self.client.get("/api/rota/swap-requests/")
@@ -272,6 +303,12 @@ class SwapRequestFlowTests(SupabaseAuthMixin, APITestCase):
         self.authenticate(BOB_SUB)
         response = self.client.get("/api/rota/swap-requests/")
         self.assertEqual(response.data, [])
+
+    def test_the_requester_still_sees_their_own_offer(self):
+        """They must, or there is no way to withdraw it."""
+        self.open_swap()
+        self.authenticate(ALICE_SUB)
+        self.assertEqual(len(self.client.get("/api/rota/swap-requests/").data), 1)
 
 
 @override_settings(
@@ -303,7 +340,9 @@ class SwapFacilityVisibilityTests(SupabaseAuthMixin, APITestCase):
 
     def test_facility_sees_open_swaps_on_its_own_shifts(self):
         ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
         self.authenticate(FACILITY_SUB)
         response = self.client.get("/api/rota/swap-requests/")
@@ -325,7 +364,9 @@ class SwapFacilityVisibilityTests(SupabaseAuthMixin, APITestCase):
 
     def test_facility_sees_who_actually_took_the_shift(self):
         swap = ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
         self.authenticate(BOB_SUB)
         self.client.post(f"/api/rota/swap-requests/{swap.id}/accept/", {}, format="json")
@@ -341,7 +382,9 @@ class SwapFacilityVisibilityTests(SupabaseAuthMixin, APITestCase):
 
     def test_facility_cannot_see_another_facilitys_swaps(self):
         ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
         self.authenticate(OTHER_FACILITY_SUB)
         self.assertEqual(self.client.get("/api/rota/swap-requests/").data, [])
@@ -349,7 +392,9 @@ class SwapFacilityVisibilityTests(SupabaseAuthMixin, APITestCase):
     def test_facility_cannot_accept_a_swap(self):
         """Visibility, not a gate — and not a way to reassign staff either."""
         swap = ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
         self.authenticate(FACILITY_SUB)
         response = self.client.post(
@@ -361,7 +406,9 @@ class SwapFacilityVisibilityTests(SupabaseAuthMixin, APITestCase):
 
     def test_facility_cannot_cancel_a_swap(self):
         swap = ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
         self.authenticate(FACILITY_SUB)
         response = self.client.post(
@@ -373,7 +420,9 @@ class SwapFacilityVisibilityTests(SupabaseAuthMixin, APITestCase):
 
     def test_unapproved_facility_sees_nothing(self):
         ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
         self.facility.status = Facility.Status.SUSPENDED
         self.facility.save()
@@ -401,8 +450,11 @@ class SwapFacilityIsolationTests(SupabaseAuthMixin, APITestCase):
             self.other, "Outsider", "outsider@example.com", OUTSIDER_SUB
         )
         self.shift = make_shift(self.facility, self.alice)
+        self.peer = make_profile(self.facility, "Peer", "peer@example.com", CARLA_SUB)
         self.swap = ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.peer,
         )
 
     def test_outsider_cannot_see_the_request(self):
@@ -452,10 +504,7 @@ class SwapFacilityIsolationTests(SupabaseAuthMixin, APITestCase):
         a shift they were not named for cannot tell the request apart from one
         that does not exist."""
         bob = make_profile(self.facility, "Bob", "bob@example.com", BOB_SUB)
-        carla = make_profile(self.facility, "Carla", "carla@example.com", CARLA_SUB)
-        self.swap.target_professional = carla
-        self.swap.save()
-
+        # The offer in setUp already names self.peer, so Bob is the bystander.
         self.authenticate(BOB_SUB)
         targeted = self.client.post(
             f"/api/rota/swap-requests/{self.swap.id}/accept/", {}, format="json"
@@ -481,7 +530,9 @@ class SwapFacilityIsolationTests(SupabaseAuthMixin, APITestCase):
         self.swap.delete()
         self.authenticate(OUTSIDER_SUB)
         response = self.client.post(
-            f"/api/rota/shifts/{self.shift.id}/swap-request/", {}, format="json"
+            f"/api/rota/shifts/{self.shift.id}/swap-request/",
+            {"target_professional": self.alice.id},
+            format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertFalse(ShiftSwapRequest.objects.exists())
@@ -537,6 +588,16 @@ class SwapFacilityIsolationTests(SupabaseAuthMixin, APITestCase):
 class SwapAcceptConcurrencyTests(TransactionTestCase):
     """Definition-of-done item 2, proven by racing real threads.
 
+    Targeting changed what race is worth proving. Eight different people can
+    no longer contend for one offer — only the named colleague may take it —
+    so the realistic collision is the target themselves arriving twice at
+    once: a double-tap, two devices, a retry on a slow response.
+
+    Bystanders are raced alongside them anyway. Their claims carry the same
+    `target_professional` filter the view uses, so they update zero rows. That
+    is the point: targeting is enforced *inside* the one-way door, not by a
+    check before it that a concurrent request could slip past.
+
     TransactionTestCase rather than TestCase: the default wraps each test in a
     transaction the threads could not see past, so the race would not be real.
     """
@@ -544,26 +605,31 @@ class SwapAcceptConcurrencyTests(TransactionTestCase):
     def setUp(self):
         self.facility = make_facility()
         self.alice = make_profile(self.facility, "Alice", "alice@example.com", ALICE_SUB)
-        self.contenders = [
+        self.bob = make_profile(self.facility, "Bob", "bob@example.com", BOB_SUB)
+        self.bystanders = [
             make_profile(
                 self.facility,
-                f"Contender{i}",
-                f"c{i}@example.com",
+                f"Bystander{i}",
+                f"b{i}@example.com",
                 f"eeeeeeee-0000-4000-8000-{i:012d}",
             )
-            for i in range(8)
+            for i in range(4)
         ]
         self.shift = make_shift(self.facility, self.alice)
         self.swap = ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
 
     def _claim(self, profile, barrier, results, lock):
-        """The exact statement the accept view runs."""
+        """The exact statement the accept view runs, target filter included."""
         try:
             barrier.wait(timeout=10)
             claimed = ShiftSwapRequest.objects.filter(
-                pk=self.swap.pk, status=ShiftSwapRequest.Status.PENDING
+                pk=self.swap.pk,
+                status=ShiftSwapRequest.Status.PENDING,
+                target_professional=profile,
             ).update(
                 status=ShiftSwapRequest.Status.ACCEPTED,
                 accepted_by=profile,
@@ -582,13 +648,16 @@ class SwapAcceptConcurrencyTests(TransactionTestCase):
             connections.close_all()
 
     def test_exactly_one_of_eight_simultaneous_accepts_wins(self):
+        # Four threads are the target arriving at once; four are colleagues
+        # who were not named.
+        racers = [self.bob] * 4 + self.bystanders
         results: list = []
         lock = threading.Lock()
-        barrier = threading.Barrier(len(self.contenders))
+        barrier = threading.Barrier(len(racers))
 
         threads = [
             threading.Thread(target=self._claim, args=(p, barrier, results, lock))
-            for p in self.contenders
+            for p in racers
         ]
         for t in threads:
             t.start()
@@ -596,7 +665,7 @@ class SwapAcceptConcurrencyTests(TransactionTestCase):
             t.join(timeout=30)
 
         self.assertEqual(
-            len(results), len(self.contenders), f"threads did not all finish: {results}"
+            len(results), len(racers), f"threads did not all finish: {results}"
         )
         errors = [r for r in results if not isinstance(r[1], int)]
         self.assertEqual(errors, [], f"threads raised: {errors}")
@@ -606,15 +675,32 @@ class SwapAcceptConcurrencyTests(TransactionTestCase):
         self.assertEqual(
             len(winners), 1, f"expected exactly one winner, got {len(winners)}"
         )
-        self.assertEqual(len(losers), len(self.contenders) - 1)
+        self.assertEqual(len(losers), len(racers) - 1)
+        # Not merely one winner — the *right* one. A bystander winning would
+        # mean the target filter is not actually part of the claim.
+        self.assertEqual(winners[0], self.bob.id)
 
         self.swap.refresh_from_db()
         self.shift.refresh_from_db()
         self.assertEqual(self.swap.status, ShiftSwapRequest.Status.ACCEPTED)
-        self.assertEqual(self.swap.accepted_by_id, winners[0])
+        self.assertEqual(self.swap.accepted_by_id, self.bob.id)
         # The decisive assertion: the shift belongs to the one winner, and the
         # other seven did not overwrite it on their way past.
-        self.assertEqual(self.shift.professional_id, winners[0])
+        self.assertEqual(self.shift.professional_id, self.bob.id)
+
+    def test_no_bystander_can_ever_claim_it(self):
+        """Stated on its own, without the race, so a failure here is
+        unambiguous about which rule broke."""
+        for bystander in self.bystanders:
+            claimed = ShiftSwapRequest.objects.filter(
+                pk=self.swap.pk,
+                status=ShiftSwapRequest.Status.PENDING,
+                target_professional=bystander,
+            ).update(status=ShiftSwapRequest.Status.ACCEPTED)
+            self.assertEqual(claimed, 0)
+
+        self.swap.refresh_from_db()
+        self.assertEqual(self.swap.status, ShiftSwapRequest.Status.PENDING)
 
     def test_database_backend_under_test(self):
         """Recorded so a green run cannot be mistaken for a stronger guarantee
@@ -734,7 +820,9 @@ class StaleSwapTests(SupabaseAuthMixin, APITestCase):
         # Opened while the shift was still ahead, then time passed.
         self.shift = make_shift(self.facility, self.alice, days_ahead=-1)
         self.swap = ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
 
     def accept(self):
@@ -768,7 +856,9 @@ class StaleSwapTests(SupabaseAuthMixin, APITestCase):
         """The guard must not catch the ordinary case."""
         future = make_shift(self.facility, self.alice, days_ahead=3)
         swap = ShiftSwapRequest.objects.create(
-            shift=future, requesting_professional=self.alice
+            shift=future,
+            requesting_professional=self.alice,
+            target_professional=self.bob,
         )
         self.authenticate(BOB_SUB)
         response = self.client.post(

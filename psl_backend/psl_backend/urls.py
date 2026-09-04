@@ -30,6 +30,7 @@ from profiles.views import (
     PushDeviceRegisterView,
 )
 from rota.views import (
+    EligibleColleaguesView,
     PublishShiftsView,
     ShiftListCreateView,
     ShiftSwapRequestCreateView,
@@ -113,6 +114,11 @@ urlpatterns = [
         "api/rota/shifts/<int:shift_id>/swap-request/",
         ShiftSwapRequestCreateView.as_view(),
         name="rota-swap-request-create",
+    ),
+    path(
+        "api/rota/shifts/<int:shift_id>/eligible-colleagues/",
+        EligibleColleaguesView.as_view(),
+        name="rota-eligible-colleagues",
     ),
     path(
         "api/rota/swap-requests/",

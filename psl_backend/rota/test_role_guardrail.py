@@ -108,9 +108,23 @@ class SwapRoleGuardrailTests(APITestCase):
             is_published=True,
             published_at=timezone.now(),
         )
+
+    def offer_to(self, professional):
+        """Create the offer directly rather than through the API.
+
+        Offering to someone whose role does not match is refused at creation
+        now, so the acceptance guardrail could not be reached through the
+        endpoint at all. Building the row here keeps the two rules independent:
+        this file is about what acceptance refuses, whatever produced the row.
+        A role changed after the offer was made reaches exactly this state.
+        """
+        ShiftSwapRequest.objects.filter(shift=self.shift).delete()
         self.swap = ShiftSwapRequest.objects.create(
-            shift=self.shift, requesting_professional=self.alice
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=professional,
         )
+        return self.swap
 
     def make_profile(self, name, email, sub, role):
         return Profile.objects.create(
@@ -134,6 +148,7 @@ class SwapRoleGuardrailTests(APITestCase):
         )
 
     def test_matching_role_can_accept(self):
+        self.offer_to(self.bob)
         response = self.accept(BOB_SUB)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -143,6 +158,7 @@ class SwapRoleGuardrailTests(APITestCase):
         self.assertEqual(self.swap.status, ShiftSwapRequest.Status.ACCEPTED)
 
     def test_mismatched_role_is_refused(self):
+        self.offer_to(self.carla)
         response = self.accept(CARLA_SUB)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn(REGISTRAR, response.data["detail"])
@@ -153,6 +169,7 @@ class SwapRoleGuardrailTests(APITestCase):
         The enumeration-safe 404s elsewhere in this view hide whether a row
         exists; Carla can see this request perfectly well and is entitled to
         know exactly why she cannot take it."""
+        self.offer_to(self.carla)
         response = self.accept(CARLA_SUB)
         self.assertEqual(response.status_code, 400)
         self.assertNotIn(response.status_code, (401, 403, 404))
@@ -160,6 +177,7 @@ class SwapRoleGuardrailTests(APITestCase):
     def test_blank_role_is_refused(self):
         self.carla.role = ""
         self.carla.save()
+        self.offer_to(self.carla)
         response = self.accept(CARLA_SUB)
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -173,6 +191,7 @@ class SwapRoleGuardrailTests(APITestCase):
         self.carla.save()
         self.shift.role = ""
         self.shift.save()
+        self.offer_to(self.carla)
 
         self.assertEqual(self.accept(CARLA_SUB).status_code, 400)
         self.shift.refresh_from_db()
@@ -183,6 +202,7 @@ class SwapRoleGuardrailTests(APITestCase):
     def test_refusal_leaves_the_request_untouched(self):
         """The claim is a one-way door. A mismatched attempt has to bounce
         before it, or the request is burnt and nobody can take the shift."""
+        self.offer_to(self.carla)
         self.accept(CARLA_SUB)
 
         self.swap.refresh_from_db()
@@ -193,21 +213,30 @@ class SwapRoleGuardrailTests(APITestCase):
         self.shift.refresh_from_db()
         self.assertEqual(self.shift.professional, self.alice)
 
-    def test_a_matched_professional_can_still_accept_afterwards(self):
-        """The point of checking first, stated as the outcome that matters."""
+    def test_the_target_can_still_accept_after_a_refusal(self):
+        """The point of checking first, stated as the outcome that matters.
+
+        Targeting means only Carla can take this one, so the refusal is
+        undone the way it would be in practice: her facility sets her role."""
+        self.offer_to(self.carla)
         self.assertEqual(self.accept(CARLA_SUB).status_code, 400)
-        self.assertEqual(self.accept(BOB_SUB).status_code, 200)
+
+        self.carla.role = REGISTRAR
+        self.carla.save()
+        self.assertEqual(self.accept(CARLA_SUB).status_code, 200)
 
         self.shift.refresh_from_db()
-        self.assertEqual(self.shift.professional, self.bob)
+        self.assertEqual(self.shift.professional, self.carla)
 
     def test_refusal_writes_no_history(self):
         """A rejected attempt is not an event in the swap's life."""
+        self.offer_to(self.carla)
         before = self.swap.history.count()
         self.accept(CARLA_SUB)
         self.assertEqual(self.swap.history.count(), before)
 
     def test_case_difference_does_not_block_a_legitimate_swap(self):
+        self.offer_to(self.bob)
         self.shift.role = "ent registrar"
         self.shift.save()
         self.assertEqual(self.accept(BOB_SUB).status_code, status.HTTP_200_OK)
@@ -238,6 +267,7 @@ class SwapRoleGuardrailTests(APITestCase):
     def test_ward_does_not_gate_anything(self):
         """Informational only, by design. Bob's profile carries no ward at all
         and the swap still goes through."""
+        self.offer_to(self.bob)
         self.shift.ward = "Ward 9"
         self.shift.save()
         self.assertEqual(self.accept(BOB_SUB).status_code, status.HTTP_200_OK)
@@ -245,6 +275,7 @@ class SwapRoleGuardrailTests(APITestCase):
     def test_cancel_is_not_gated_by_role(self):
         """The guardrail is about who may take a shift on, not who may
         withdraw an offer. Alice can always retract her own."""
+        self.offer_to(self.bob)
         self.authenticate(ALICE_SUB)
         response = self.client.post(
             f"/api/rota/swap-requests/{self.swap.id}/cancel/", {}, format="json"

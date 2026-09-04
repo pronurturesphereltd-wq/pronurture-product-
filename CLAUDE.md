@@ -124,6 +124,21 @@ The general rule: when the API refuses an action under some condition, the UI mu
 
 Related React detail: **do not read the clock during render.** `Date.now()` in a component body is impure, eslint rejects it, and it drifts between renders for no reason the data reflects. `/me` captures "now" when data is fetched and compares against that.
 
+## Swap offers are targeted only
+Every offer names one colleague. There are no open "whoever is qualified can grab it" offers.
+
+`target_professional` stays **nullable in the database** — settled offers predating the rule were created without one, and rewriting history to invent a target would be a lie about what happened. Required is enforced in the serializer instead. Those legacy rows are visible only to whoever made them and can never be accepted, which is the right end state.
+
+`GET /api/rota/shifts/<id>/eligible-colleagues/` gives the frontend its list: same facility, role matching the shift, requester excluded. It is professional-safe, unlike `/api/facilities/staff/`, and only the shift's assignee may ask. Matching happens in Python via `role_matches`, not an `iexact` filter, so the list cannot disagree with what acceptance will allow.
+
+**The empty case is a real state**, not an error: nobody else at the facility shares the role. The UI says so rather than showing a dropdown with nothing in it.
+
+Creating an offer re-validates the target's facility, role and not-self **even though the picker only offers valid choices**. The API is the boundary; the UI is not.
+
+Acceptance folds `target_professional` into the atomic claim itself rather than checking before it, so there is no window between checking and claiming. A colleague who was not named gets the same 404 as a request that does not exist — they learn nothing about whether it is there.
+
+**The concurrency proof changed shape.** Eight different people can no longer contend for one offer, so the race that matters is the target arriving twice at once — a double-tap, two devices, a retry. Bystanders are raced alongside them carrying the same target filter, and update zero rows, which is what proves the rule lives inside the claim.
+
 ## Role guardrail on shift swaps
 A patient-safety rule, so it is enforced server-side: a professional cannot accept a swap for a role they are not designated for. `Profile.role` is the operational designation ("ENT Registrar", "A&E Nurse") — facility-controlled information, distinct from the licence fields PSL verifies, and set in Django Admin like `license_expiry_date`. `Shift.ward` exists now too and is **purely informational; it never gates anything**.
 

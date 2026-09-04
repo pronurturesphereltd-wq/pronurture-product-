@@ -26,6 +26,14 @@ type Swap = {
   status: string;
 };
 
+type Colleague = {
+  id: number;
+  full_name: string;
+  email: string;
+  role: string;
+  verification_state: string;
+};
+
 type Leave = {
   id: number;
   start_date: string;
@@ -53,6 +61,76 @@ function formatDate(iso: string): string {
   });
 }
 
+/**
+ * Step one of offering a shift: choose who it goes to.
+ *
+ * The empty case is handled explicitly rather than left as a select with no
+ * options. Nobody at the facility sharing this shift's role is a real and
+ * unremarkable situation, and a silently empty dropdown reads as broken.
+ */
+function OfferPicker({
+  shift,
+  colleagues,
+  chosen,
+  setChosen,
+  busy,
+  onSend,
+  onCancel,
+}: {
+  shift: Shift;
+  colleagues: Colleague[] | null;
+  chosen: string;
+  setChosen: (value: string) => void;
+  busy: boolean;
+  onSend: () => void;
+  onCancel: () => void;
+}) {
+  if (colleagues === null) return <span className="sub">Loading…</span>;
+
+  if (colleagues.length === 0) {
+    return (
+      <>
+        <span className="sub">
+          No eligible colleague found for this role. A swap can only go to
+          someone designated &lsquo;{shift.role}&rsquo; at your facility.
+        </span>
+        <br />
+        <button className="secondary small" onClick={onCancel}>
+          Close
+        </button>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <label htmlFor={`target-${shift.id}`} className="sr-only">
+        Offer to
+      </label>
+      <select
+        id={`target-${shift.id}`}
+        value={chosen}
+        onChange={(e) => setChosen(e.target.value)}
+      >
+        <option value="">Choose a colleague…</option>
+        {colleagues.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.full_name}
+          </option>
+        ))}
+      </select>
+      <div className="row" style={{ marginTop: "0.4rem" }}>
+        <button className="small" onClick={onSend} disabled={busy || !chosen}>
+          {busy ? "Sending…" : "Send offer"}
+        </button>
+        <button className="secondary small" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+    </>
+  );
+}
+
 export default function MyShiftsPage() {
   return (
     <RequireKind kind="professional">
@@ -75,6 +153,12 @@ function ProfessionalView({ identity }: { identity: Identity }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Offering is two steps now: pick a colleague, then send. `offering` holds
+  // the shift whose picker is open; null means no picker is showing.
+  const [offering, setOffering] = useState<Shift | null>(null);
+  const [colleagues, setColleagues] = useState<Colleague[] | null>(null);
+  const [chosen, setChosen] = useState("");
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -126,12 +210,45 @@ function ProfessionalView({ identity }: { identity: Identity }) {
     }
   }
 
-  const offer = (shift: Shift) =>
-    act(
-      `offer-${shift.id}`,
-      () => apiPostJson(`/api/rota/shifts/${shift.id}/swap-request/`, {}),
-      `Offered your ${shift.role} shift for swap.`,
+  /** Step one: open the picker and load who this shift can go to. */
+  async function startOffer(shift: Shift) {
+    setBusy(`offer-${shift.id}`);
+    setError(null);
+    setNotice(null);
+    setOffering(shift);
+    setColleagues(null);
+    setChosen("");
+    try {
+      const rows = await apiGet<Colleague[]>(
+        `/api/rota/shifts/${shift.id}/eligible-colleagues/`,
+      );
+      setColleagues(rows);
+      if (rows.length === 1) setChosen(String(rows[0].id));
+    } catch (err) {
+      setOffering(null);
+      handleError(err);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Step two: send it to the colleague they picked. */
+  function sendOffer(shift: Shift) {
+    const target = colleagues?.find((c) => String(c.id) === chosen);
+    if (!target) return;
+    return act(
+      `send-${shift.id}`,
+      async () => {
+        await apiPostJson(`/api/rota/shifts/${shift.id}/swap-request/`, {
+          target_professional: target.id,
+        });
+        setOffering(null);
+        setColleagues(null);
+        setChosen("");
+      },
+      `Offered your ${shift.role} shift to ${target.full_name}. Only they can accept it.`,
     );
+  }
 
   const withdraw = (swap: Swap) =>
     act(
@@ -238,20 +355,42 @@ function ProfessionalView({ identity }: { identity: Identity }) {
                   <td>{formatWhen(shift.end_time)}</td>
                   <td>
                     {offered ? (
-                      <button
-                        className="secondary small"
-                        onClick={() => withdraw(offered)}
-                        disabled={busy === `withdraw-${offered.id}`}
-                      >
-                        Withdraw offer
-                      </button>
+                      <>
+                        <span className="sub">
+                          Offered to{" "}
+                          {offered.target_professional_name ?? "a colleague"}
+                        </span>
+                        <br />
+                        <button
+                          className="secondary small"
+                          onClick={() => withdraw(offered)}
+                          disabled={busy === `withdraw-${offered.id}`}
+                        >
+                          Withdraw offer
+                        </button>
+                      </>
+                    ) : offering?.id === shift.id ? (
+                      <OfferPicker
+                        shift={shift}
+                        colleagues={colleagues}
+                        chosen={chosen}
+                        setChosen={setChosen}
+                        busy={busy === `send-${shift.id}`}
+                        onSend={() => sendOffer(shift)}
+                        onCancel={() => {
+                          setOffering(null);
+                          setColleagues(null);
+                        }}
+                      />
                     ) : (
                       <button
                         className="secondary small"
-                        onClick={() => offer(shift)}
+                        onClick={() => startOffer(shift)}
                         disabled={busy === `offer-${shift.id}`}
                       >
-                        Offer for swap
+                        {busy === `offer-${shift.id}`
+                          ? "Loading…"
+                          : "Offer for swap"}
                       </button>
                     )}
                   </td>
@@ -294,7 +433,10 @@ function ProfessionalView({ identity }: { identity: Identity }) {
 
       <h2>Shifts offered by colleagues</h2>
       {!loading && offersFromOthers.length === 0 && (
-        <p className="sub">Nobody has offered a shift you could take.</p>
+        <p className="sub">
+          Nobody has offered you a shift. Offers name one colleague, so you
+          only ever see the ones meant for you.
+        </p>
       )}
       {offersFromOthers.length > 0 && (
         <table>
@@ -320,12 +462,10 @@ function ProfessionalView({ identity }: { identity: Identity }) {
                 </td>
                 <td>
                   {swap.requesting_professional_name}
-                  {swap.target_professional_name && (
-                    <>
-                      <br />
-                      <span className="sub">offered to you directly</span>
-                    </>
-                  )}
+                  <br />
+                  {/* Every offer is targeted now, and the list only ever
+                      contains offers aimed at you — the API scopes it. */}
+                  <span className="sub">offered to you</span>
                 </td>
                 <td>{formatWhen(swap.shift_start_time)}</td>
                 <td>
