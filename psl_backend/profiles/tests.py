@@ -212,8 +212,46 @@ class RBACGroupTests(TestCase):
             p.content_type.app_label for p in officer_group.permissions.all()
         }
 
-        self.assertEqual(admin_apps, {"facilities", "profiles"})
+        # core/0002 widened `admin` to the models added in Phase 1A and 1B.
+        # Until then it covered only the two models that existed at Phase 0,
+        # which left shifts, invite links, leave and compliance visible to
+        # superusers alone.
+        self.assertEqual(
+            admin_apps,
+            {"facilities", "profiles", "rota", "leave", "compliance"},
+        )
+        # The officer's scope is unchanged, and stays that way: granting
+        # nothing outside Profile is what hides every other section from the
+        # admin nav.
         self.assertEqual(officer_apps, {"profiles"})
+
+    def test_admin_group_reaches_the_phase_1_models(self):
+        staffer = User.objects.create_user(username="psl", password="x", is_staff=True)
+        staffer.groups.add(Group.objects.get(name="admin"))
+        staffer = User.objects.get(pk=staffer.pk)  # drop the permission cache
+
+        for perm in (
+            "rota.change_shift",
+            "rota.view_shiftswaprequest",
+            "leave.view_leaveapplication",
+            "compliance.change_compliancealert",
+            "facilities.view_invitelink",
+            "profiles.view_pushdevice",
+            # The audit trail is not much use to someone who cannot read it.
+            "rota.view_historicalshift",
+            "leave.view_historicalleaveapplication",
+        ):
+            self.assertTrue(staffer.has_perm(perm), f"admin group missing {perm}")
+
+    def test_verification_officer_gains_nothing_from_the_new_models(self):
+        officer = User.objects.create_user(
+            username="officer3", password="x", is_staff=True
+        )
+        officer.groups.add(Group.objects.get(name="verification_officer"))
+        officer = User.objects.get(pk=officer.pk)
+
+        for module in ("rota", "leave", "compliance"):
+            self.assertFalse(officer.has_module_perms(module))
 
     def test_verification_officer_cannot_touch_facilities(self):
         officer = User.objects.create_user(

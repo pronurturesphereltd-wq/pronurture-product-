@@ -227,8 +227,12 @@ class SwapRequestAcceptView(APIView):
 
     permission_classes = [IsProfessional]
 
+    # request=None: a bodyless POST otherwise leaves drf-spectacular unable to
+    # guess a body, and it drops the endpoint from the schema altogether.
     @extend_schema(
-        responses={200: ShiftSwapRequestSerializer}, summary="Accept a swap"
+        request=None,
+        responses={200: ShiftSwapRequestSerializer},
+        summary="Accept a swap",
     )
     def post(self, request, pk):
         profile = request.profile
@@ -286,7 +290,9 @@ class SwapRequestCancelView(APIView):
     permission_classes = [IsProfessional]
 
     @extend_schema(
-        responses={200: ShiftSwapRequestSerializer}, summary="Cancel a swap"
+        request=None,
+        responses={200: ShiftSwapRequestSerializer},
+        summary="Cancel a swap",
     )
     def post(self, request, pk):
         profile = request.profile

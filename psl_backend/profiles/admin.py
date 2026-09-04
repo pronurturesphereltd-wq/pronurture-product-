@@ -12,6 +12,9 @@ class ProfileAdmin(SimpleHistoryAdmin):
         "email",
         "verification_state",
         "onboarding_path",
+        # Drives the compliance sweep. Set here during licence verification —
+        # it is PSL's data, not something a facility uploads.
+        "license_expiry_date",
         "created_at",
     )
     list_filter = ("verification_state", "onboarding_path")

@@ -19,7 +19,9 @@ psl_backend/
 ├── psl_backend/          # settings.py, urls.py
 ├── facilities/            # models, admin, serializers, views, importing.py, tasks.py
 ├── profiles/               # models.py, admin.py, serializers.py, views.py
-├── rota/                    # Shift model, publish endpoint, django-q2 tasks
+├── rota/                    # Shift + ShiftSwapRequest, publish endpoint, django-q2 tasks
+├── leave/                   # LeaveApplication, submission + facility approval queue
+├── compliance/          # ComplianceAlert, the daily sweep, facility-facing endpoints
 └── core/                     # Supabase JWT auth, permissions, push, history helpers
 ```
 
@@ -32,6 +34,12 @@ Added in Phase 1A:
 
 **InviteLink** (facilities): facility FK, unguessable UUID `token`, created_by, expires_at. **PushDevice** (profiles): profile FK, unique fcm_token, device_type. **Shift** (rota): facility FK, nullable professional FK, role, start/end_time, is_published, published_at, plus `reminder_sent`/`reminder_sent_at` as the idempotency guard for the reminder sweep.
 
+Added in Phase 1B:
+
+**ShiftSwapRequest** (rota): shift FK, requesting/target/accepted_by Profile FKs, status, decided_at — with a partial `UniqueConstraint` on `shift` where `status='pending'`, so one shift can carry only one open offer. **LeaveApplication** (leave): professional FK, start/end_date, reason, status, decided_at, and a `CheckConstraint` that end_date is not before start_date. **ComplianceAlert** (compliance): profile FK, alert_type, due_date, status, resolved_at, with a partial `UniqueConstraint` on (profile, alert_type) where `status='open'` — the enforced half of the sweep's idempotency guard. **Profile** gains `license_expiry_date`.
+
+ComplianceAlert is the one new model with no `HistoricalRecords`: it is derived state the sweep regenerates from the profile's licence data, and the licence changes that drive it are already in the Profile history.
+
 `HistoricalRecords` is passed `get_user=core.history.get_history_user`. Public API callers are Supabase identities with no Django User row, and simple_history's default raises ValueError on them.
 
 ## Admin console (this IS the internal UI — no separate frontend)
@@ -39,7 +47,7 @@ Added in Phase 1A:
 - `ProfileAdmin`: list_display on full_name/email/verification_state/onboarding_path/created_at, list_filter on verification_state and onboarding_path, bulk actions `verify_profiles` / `reject_profiles` that set verification_state + verified_at + verified_by.
 
 ## RBAC
-Two Django Groups: `admin` (full permissions on both Facility and Profile) and `verification_officer` (permissions on Profile only — no Facility access at all). Set this up as a data migration, not a manual admin-UI step, so it's reproducible.
+Two Django Groups: `admin` (full permissions on every model, including the historical tables — an audit trail nobody can read is not much of one) and `verification_officer` (permissions on Profile only — no access to anything else at all). Set up as data migrations, not manual admin-UI steps, so it's reproducible: `core/0001_rbac_groups` creates the groups, `core/0002_rbac_phase1_models` extends `admin` to everything added after Phase 0. Note `0001` uses `.set()` and `0002` uses `.add()` — a future migration that widens a group must add, or it silently revokes what came before.
 
 ## Public API (facility/professional-facing, authenticated via Supabase JWT)
 - `POST /api/facilities/register/` — creates Facility with status=pending, stores supabase_user_id from the verified token
@@ -54,7 +62,19 @@ Added in Phase 1A:
 - `POST /api/rota/shifts/publish/` — publishes and queues a push per assigned professional
 - `POST /api/devices/register/` — upserts a professional's FCM token
 
+Added in Phase 1B:
+- `POST /api/rota/shifts/<id>/swap-request/` — the assignee offers their own shift, optionally to one named colleague
+- `GET /api/rota/swap-requests/` — open offers on the caller's facility, plus their own whatever the status
+- `POST /api/rota/swap-requests/<id>/accept/` — the atomic claim; the loser of a race gets 409
+- `POST /api/rota/swap-requests/<id>/cancel/` — the requester withdraws
+- `GET|POST /api/leave/applications/` — one endpoint, two audiences: a facility reads its approval queue, a professional reads their own applications. `IsFacilityOrProfessional` attaches whichever record the caller owns and the view branches on which one arrived
+- `POST /api/leave/applications/<id>/approve|decline/` — facility only, scoped to its own roster
+- `GET /api/facilities/compliance-alerts/` — open alerts by default; `?status=all` for the history
+- `POST /api/facilities/compliance-alerts/<id>/resolve/`
+
 `core/authentication.py` is a DRF `BaseAuthentication` subclass reading `Authorization: Bearer <token>`. It verifies **asymmetrically (ES256) against the project's public JWKS endpoint via `PyJWKClient`** — there is no shared JWT secret, and accepted algorithms are pinned to reject `alg:none` and HS256 confusion attacks. Facility/professional endpoints then resolve the identity to a record via `core/permissions.py`, which attaches `request.facility` / `request.profile`. Never Django session auth.
+
+**Bodyless POST endpoints need `@extend_schema(request=None, ...)`.** Without it drf-spectacular cannot guess a request body, and silently drops the endpoint from the schema — it disappears from `/api/docs/` while the route still works. `manage.py spectacular --validate` reports these as errors; it should stay at zero.
 
 ## Definition of done — Phase 0 (all met)
 1. Admin can log in to Django Admin.
@@ -74,9 +94,12 @@ Added in Phase 1A:
   5. The reminder sweep fired exactly once across three consecutive scheduled runs.
 - **Criterion 6: verified.** The minimal Next.js facility app (`web-app/`) drives the whole loop through its UI. Confirmed by running it, not by the build passing: a 3-row CSV imported through `/import` created 3 pending profiles, and 2 shifts created and published through `/rota` — one assigned, one deliberately unassigned and correctly reported as notifying nobody.
 - **Phase 1A is complete.** All six done-criteria verified against live infrastructure. Next work is Phase 1B, and it is not started.
-- **Running it:** the web server alone is not enough — `manage.py qcluster` must run for imports, pushes and reminders. Register the reminder schedule once with `manage.py setup_shift_reminders`.
-- **After any system clock correction**, re-run `manage.py setup_shift_reminders`. `Schedule.next_run` is an absolute timestamp and does not self-heal: a clock that was running fast leaves the sweep stalled for the size of the correction, silently and with nothing logged.
-- **Phase 1B: in progress.** Steps 1–2 of PSL_Phase1B_Spec.md Section 7 are built: the `ShiftSwapRequest` model, `LeaveApplication` and `ComplianceAlert` models, `Profile.license_expiry_date`, and the four swap endpoints with the atomic-accept concurrency test. Steps 3–7 (leave endpoints, compliance task, frontend, isolation tests, end-to-end run) follow.
+- **Running it:** the web server alone is not enough — `manage.py qcluster` must run for imports, pushes and reminders. Register the two schedules once: `manage.py setup_shift_reminders` and `manage.py setup_compliance_checks` (add `--run-now` to sweep immediately instead of waiting for the cluster).
+- **After any system clock correction**, re-run both setup commands. `Schedule.next_run` is an absolute timestamp and does not self-heal: a clock that was running fast leaves the sweep stalled for the size of the correction, silently and with nothing logged. This applies to every schedule created from now on, not just the one it first bit.
+- **Phase 1B: in progress.** Steps 1–4 of PSL_Phase1B_Spec.md Section 7 are built — the whole backend. 211 tests passing. Swap requests with the atomic accept and its concurrency proof; leave applications with the facility approval queue; the daily compliance sweep and its endpoints. **Nothing here is verified against live infrastructure yet** — that is step 7, and it has not run.
+- **Steps 5–7 remain:** the `/compliance` page plus swap and leave sections on `/rota` (step 5), facility-isolation tests across all three models (step 6 — note these were written alongside each endpoint rather than deferred, so step 6 is a review pass, not new work), and the end-to-end run (step 7).
+- **Licence expiry is PSL's data, not the facility's.** `license_expiry_date` is set in Django Admin during licence verification, alongside `verification_state`. It is deliberately not a bulk-import column: a facility uploading its own staff's licence expiry dates would be self-certifying the thing PSL exists to verify. This does mean the compliance sweep finds nothing until PSL staff start recording expiry dates.
+- **The `admin` group now spans every model** (core migration `0002_rbac_phase1_models`). It previously covered only Facility and Profile, so everything added in Phase 1A — shifts, invite links, push devices — was reachable by superusers alone. `verification_officer` is unchanged and still Profile-only; that narrowness is what hides the other sections from its admin nav.
 - **Not yet built:** the rest of Phase 1B, Phase 2 (Jobs), Phase 3 (Academy), Phase 4 (Analytics).
 
 Do not start work on a phase beyond what's marked "in progress" or listed as current focus in a prompt, even if it seems like a natural next step. Ask before expanding scope.

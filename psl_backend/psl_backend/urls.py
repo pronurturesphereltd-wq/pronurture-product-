@@ -5,12 +5,21 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from compliance.views import (
+    ComplianceAlertListView,
+    ComplianceAlertResolveView,
+)
 from facilities.views import (
     BulkImportStatusView,
     FacilityBulkImportView,
     FacilityRegisterView,
     FacilityStaffView,
     InviteLinkCreateView,
+)
+from leave.views import (
+    LeaveApplicationListCreateView,
+    LeaveApproveView,
+    LeaveDeclineView,
 )
 from profiles.views import (
     ProfileRegisterViaInviteView,
@@ -54,6 +63,18 @@ urlpatterns = [
         "api/facilities/invite-links/",
         InviteLinkCreateView.as_view(),
         name="facility-invite-links",
+    ),
+    # Facility-facing, so routed here; the model and its sweep live in
+    # compliance/.
+    path(
+        "api/facilities/compliance-alerts/",
+        ComplianceAlertListView.as_view(),
+        name="compliance-alerts",
+    ),
+    path(
+        "api/facilities/compliance-alerts/<int:pk>/resolve/",
+        ComplianceAlertResolveView.as_view(),
+        name="compliance-alert-resolve",
     ),
     # --- Profiles ---
     path(
@@ -103,6 +124,22 @@ urlpatterns = [
         "api/rota/swap-requests/<int:pk>/cancel/",
         SwapRequestCancelView.as_view(),
         name="rota-swap-request-cancel",
+    ),
+    # --- Leave ---
+    path(
+        "api/leave/applications/",
+        LeaveApplicationListCreateView.as_view(),
+        name="leave-applications",
+    ),
+    path(
+        "api/leave/applications/<int:pk>/approve/",
+        LeaveApproveView.as_view(),
+        name="leave-application-approve",
+    ),
+    path(
+        "api/leave/applications/<int:pk>/decline/",
+        LeaveDeclineView.as_view(),
+        name="leave-application-decline",
     ),
     # --- OpenAPI ---
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

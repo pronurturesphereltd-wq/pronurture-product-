@@ -60,3 +60,40 @@ class IsProfessional(BasePermission):
 
         request.profile = profile
         return True
+
+
+class IsFacilityOrProfessional(BasePermission):
+    """Either side of the relationship, for endpoints both audiences read.
+
+    The leave list is one queryset with two meanings: a facility's approval
+    queue, and a professional's own history. Rather than duplicate the
+    endpoint, this attaches whichever record the caller owns and the view
+    branches on which one arrived. Views must read `request.facility` and
+    `request.profile` with `getattr` — exactly one of them is set.
+
+    Written out rather than composed as `IsFacility | IsProfessional` so the
+    denial message names both possibilities; DRF's OR falls back to the generic
+    "you do not have permission" and loses whatever each class had to say.
+    """
+
+    message = (
+        "No facility or professional profile is registered for this account."
+    )
+
+    def has_permission(self, request, view):
+        facility_check = IsFacility()
+        if facility_check.has_permission(request, view):
+            return True
+        # A facility that exists but is not yet approved is a different
+        # situation from an account PSL has never seen, and its message is more
+        # useful than this class's generic one.
+        if getattr(request.user, "supabase_user_id", None):
+            from facilities.models import Facility
+
+            if Facility.objects.filter(
+                supabase_user_id=request.user.supabase_user_id
+            ).exists():
+                self.message = facility_check.message
+                return False
+
+        return IsProfessional().has_permission(request, view)

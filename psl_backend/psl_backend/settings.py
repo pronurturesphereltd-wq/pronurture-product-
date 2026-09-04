@@ -88,6 +88,11 @@ SHIFT_REMINDER_LEAD_MINUTES = int(env("SHIFT_REMINDER_LEAD_MINUTES", "60"))
 SHIFT_REMINDER_WINDOW_MINUTES = int(env("SHIFT_REMINDER_WINDOW_MINUTES", "20"))
 SHIFT_REMINDER_INTERVAL_MINUTES = int(env("SHIFT_REMINDER_INTERVAL_MINUTES", "15"))
 
+# Compliance: how far ahead of a licence expiry to raise an alert. Daily
+# cadence — unlike shift reminders, a licence expiring is not a minutes-precise
+# event, and an alert stays open until someone resolves it.
+COMPLIANCE_LICENSE_LEAD_DAYS = int(env("COMPLIANCE_LICENSE_LEAD_DAYS", "30"))
+
 # CORS — the Next.js facility app is a separate origin from this API, so the
 # browser blocks its calls without these headers. An explicit allow-list, never
 # CORS_ALLOW_ALL_ORIGINS: these endpoints are authenticated and can provision
