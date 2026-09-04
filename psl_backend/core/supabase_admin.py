@@ -89,6 +89,87 @@ def invite_user(email, redirect_to=None):
         raise SupabaseAdminError("Supabase Auth returned a non-JSON response.")
 
 
+def create_user(email, password, user_metadata=None):
+    """Create an already-confirmed auth account, sending no email at all.
+
+    `invite_user` is the normal onboarding path, but it goes through Supabase's
+    default SMTP, which is rate limited — three rows was enough to earn a 429.
+    Seeding an account for someone whose profile already exists does not need
+    an email round trip, and this avoids spending the quota on one.
+
+    `email_confirm: true` marks the address confirmed at creation, so the
+    person can sign in with the password immediately rather than being stuck
+    behind a confirmation link that was never sent.
+
+    Returns the Supabase user id.
+    """
+    url = f"{settings.SUPABASE_URL}/auth/v1/admin/users"
+    payload = {"email": email, "password": password, "email_confirm": True}
+    if user_metadata:
+        payload["user_metadata"] = user_metadata
+
+    try:
+        response = requests.post(
+            url, json=payload, headers=_headers(), timeout=TIMEOUT_SECONDS
+        )
+    except requests.RequestException as exc:
+        raise SupabaseAdminError(f"Could not reach Supabase Auth: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise SupabaseAdminError(
+            f"Supabase Auth returned {response.status_code} creating the user "
+            f"({_safe_detail(response)})"
+        )
+
+    try:
+        return response.json().get("id")
+    except ValueError:
+        raise SupabaseAdminError("Supabase Auth returned a non-JSON response.")
+
+
+def find_user_by_email(email):
+    """Return the Supabase user id for `email`, or None.
+
+    Pages the admin list rather than trusting a server-side filter, because the
+    `filter` parameter's behaviour varies by GoTrue version and a silently
+    ignored filter would return page one and look like a match.
+    """
+    wanted = (email or "").strip().lower()
+    if not wanted:
+        return None
+
+    url = f"{settings.SUPABASE_URL}/auth/v1/admin/users"
+    per_page = 200
+    for page in range(1, 51):  # a hard stop rather than a while True
+        try:
+            response = requests.get(
+                url,
+                params={"page": page, "per_page": per_page},
+                headers=_headers(),
+                timeout=TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            raise SupabaseAdminError(f"Could not reach Supabase Auth: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise SupabaseAdminError(
+                f"Supabase Auth returned {response.status_code} listing users "
+                f"({_safe_detail(response)})"
+            )
+
+        try:
+            users = response.json().get("users", [])
+        except ValueError:
+            raise SupabaseAdminError("Supabase Auth returned a non-JSON response.")
+
+        for user in users:
+            if (user.get("email") or "").strip().lower() == wanted:
+                return user.get("id")
+        if len(users) < per_page:
+            return None
+    return None
+
+
 def _safe_detail(response):
     try:
         data = response.json()

@@ -114,7 +114,7 @@ Comparison ignores case and collapses whitespace (`rota/roles.py`). This is a de
 
 Scope limits, each with a test so they are not widened by accident: initial shift assignment is **not** gated (a facility can still roster anyone onto anything), cancelling is not gated, and ward is not gated.
 
-**Before testing swaps, set `Profile.role` in Django Admin.** All three live profiles currently have a blank role, so every swap acceptance will be refused until they are given one — correctly, but it will look like a bug if you have not read this.
+**Set `Profile.role` before testing swaps.** A blank role refuses every acceptance — correctly, but it looks like a bug if you have not read this. Amaka and Bola are both set to `A&E Nurse` and can swap the live A&E Nurse shift between them; Chidi is still blank and has no Supabase account.
 
 ## Cross-tenant lookups must be scoped, not checked afterwards
 Found during the step 6 audit, fixed across every Phase 1B endpoint. Two variants of the same leak:
@@ -149,6 +149,16 @@ python manage.py test rota.test_swaps
 
 ## Resolved: legacy JWT secret rotation
 Was deferred pending Supabase Auth wiring (see git history for the original note). Resolved: bulk-import account provisioning uses `SUPABASE_SECRET_KEY` (the new `sb_secret_...` format, sent on the `apikey` header) rather than the legacy `service_role`/JWT-based key. Nothing in the backend depends on the legacy JWT secret. It can be revoked in the Supabase dashboard (JWT Signing Keys tab) whenever convenient — no code impact.
+
+## Provisioning an account without an email
+`manage.py provision_professional_account <email> --role "A&E Nurse"` creates a Supabase Auth account for a Profile that already exists and links it, sending no email. Use it for seeding test professionals rather than the invite link, which goes through the rate-limited default SMTP.
+
+It calls `POST /auth/v1/admin/users` with `email_confirm: true` — without that flag the account exists but is stuck behind a confirmation link that was never sent, so nobody can sign in. The password is generated, printed once, and stored nowhere; there is no way to read it back, only to reset it in the Supabase dashboard. If the auth account already exists (an earlier attempt half-succeeded) the command adopts it and says so rather than demanding manual cleanup — and does not claim to have set a password it did not set.
+
+It refuses to invent a Profile: an orphan auth account with nothing pointing at it is the worse outcome.
+
+## Caught IntegrityError needs its own savepoint
+Third occurrence in this project, so it is written down. `except IntegrityError` around a `save()` or `create()` **must** wrap it in a nested `transaction.atomic()`. Without the savepoint the failed statement poisons the surrounding transaction and every later query raises `TransactionManagementError` instead of the error you meant to return — the handler runs, but the recovery path inside it cannot touch the database. Bit `ShiftSwapRequestCreateView` (a 409 that never rendered), the compliance sweep (a collision that would have killed the run), and `provision_professional_account`.
 
 ## Known follow-up: production email volume
 Bulk import currently sends invite emails through Supabase's default SMTP, which is rate-limited and not intended for production volume. **This is no longer theoretical:** a 3-row import provisioned 1 account and got HTTP 429 on the other 2, which the per-row report surfaced correctly (the profiles were still created, with `supabase_user_id` left null). Three rows was enough to hit the limit. Before any facility imports real staff, configure a dedicated SMTP provider (e.g. Resend, per the original tech stack doc) in Supabase's Auth settings. Worth adding a retry for 429 specifically, so throttled rows are re-attempted rather than needing a re-import.
