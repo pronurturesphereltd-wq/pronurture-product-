@@ -10,6 +10,8 @@ import {
   apiPostJson,
 } from "@/lib/api";
 import NavBar from "@/app/nav";
+import SwapRequests from "./swaps";
+import LeaveQueue from "./leave";
 
 type Shift = {
   id: number;
@@ -66,6 +68,10 @@ export default function RotaPage() {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  // Bumped whenever the shift list is reloaded, so the swap and leave panels
+  // refetch alongside it. An accepted swap reassigns a shift, so the two views
+  // would otherwise disagree until the page was reloaded by hand.
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [role, setRole] = useState("");
   const [professional, setProfessional] = useState("");
@@ -106,6 +112,7 @@ export default function RotaPage() {
         );
         return new Set([...prev].filter((id) => stillDraft.has(id)));
       });
+      setReloadKey((n) => n + 1);
     } catch (err) {
       handleError(err);
     } finally {
@@ -388,6 +395,13 @@ export default function RotaPage() {
             </tbody>
           </table>
         )}
+
+        <SwapRequests reloadKey={reloadKey} onError={handleError} />
+        <LeaveQueue
+          reloadKey={reloadKey}
+          onError={handleError}
+          onNotice={setNotice}
+        />
       </main>
     </>
   );

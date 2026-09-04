@@ -27,6 +27,12 @@ export default function NavBar() {
       >
         Import staff
       </Link>
+      <Link
+        href="/compliance"
+        aria-current={pathname === "/compliance" ? "page" : undefined}
+      >
+        Compliance
+      </Link>
       <button type="button" className="secondary" onClick={signOut}>
         Sign out
       </button>

@@ -9,7 +9,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.permissions import IsFacility, IsProfessional
+from core.permissions import IsFacility, IsFacilityOrProfessional, IsProfessional
 
 from .models import Shift, ShiftSwapRequest
 from .serializers import (
@@ -179,22 +179,29 @@ class ShiftSwapRequestCreateView(APIView):
 
 
 class SwapRequestListView(APIView):
-    """Swap requests visible to this professional.
+    """Swap requests, read by either side.
 
-    Scoped to their own facility's roster: open requests they could accept,
-    plus their own requests whatever the status.
+    A professional sees what they could act on: open offers to the whole
+    roster, offers aimed at them, and their own requests whatever the status.
+
+    A facility sees every swap on its own shifts. Per the spec this is
+    visibility, not an approval gate — swaps are peer-to-peer and complete
+    without management, but a facility that cannot see who is actually working
+    a shift has lost track of its own rota.
     """
 
-    permission_classes = [IsProfessional]
+    permission_classes = [IsFacilityOrProfessional]
 
     @extend_schema(
         responses={200: ShiftSwapRequestSerializer(many=True)},
         summary="List swap requests",
     )
     def get(self, request):
-        profile = request.profile
+        facility = getattr(request, "facility", None)
+        facility_id = facility.id if facility else request.profile.facility_id
+
         queryset = (
-            ShiftSwapRequest.objects.filter(shift__facility_id=profile.facility_id)
+            ShiftSwapRequest.objects.filter(shift__facility_id=facility_id)
             .select_related(
                 "shift",
                 "requesting_professional",
@@ -207,12 +214,16 @@ class SwapRequestListView(APIView):
         if requested_status:
             queryset = queryset.filter(status=requested_status)
 
-        # A request aimed at one person is not the rest of the roster's business.
-        queryset = queryset.filter(
-            Q(target_professional__isnull=True)
-            | Q(target_professional=profile)
-            | Q(requesting_professional=profile)
-        )
+        if facility is None:
+            # A request aimed at one person is not the rest of the roster's
+            # business. The facility is not "the rest of the roster" — it owns
+            # the shift, so this narrowing applies to peers only.
+            profile = request.profile
+            queryset = queryset.filter(
+                Q(target_professional__isnull=True)
+                | Q(target_professional=profile)
+                | Q(requesting_professional=profile)
+            )
         return Response(ShiftSwapRequestSerializer(queryset, many=True).data)
 
 

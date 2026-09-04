@@ -19,6 +19,8 @@ ALICE_SUB = "aaaaaaaa-0000-4000-8000-000000000001"
 BOB_SUB = "bbbbbbbb-0000-4000-8000-000000000002"
 CARLA_SUB = "cccccccc-0000-4000-8000-000000000003"
 OUTSIDER_SUB = "dddddddd-0000-4000-8000-000000000004"
+FACILITY_SUB = "f0000000-0000-4000-8000-000000000010"
+OTHER_FACILITY_SUB = "f0000000-0000-4000-8000-000000000011"
 
 
 def make_facility(name="Oakwood", email="oak@example.com"):
@@ -261,6 +263,116 @@ class SwapRequestFlowTests(SupabaseAuthMixin, APITestCase):
         self.authenticate(BOB_SUB)
         response = self.client.get("/api/rota/swap-requests/")
         self.assertEqual(response.data, [])
+
+
+@override_settings(
+    SUPABASE_JWT_ISSUER=ISSUER,
+    SUPABASE_JWT_AUDIENCE=AUDIENCE,
+    SUPABASE_JWT_LEEWAY_SECONDS=10,
+)
+class SwapFacilityVisibilityTests(SupabaseAuthMixin, APITestCase):
+    """Definition-of-done item 3: a facility sees swaps on its own rota.
+
+    Visibility, never a gate — nothing here lets a facility approve, block or
+    reverse a swap. It exists because a facility that cannot see who is
+    actually working a shift has lost track of its own rota.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.facility = make_facility()
+        self.facility.supabase_user_id = FACILITY_SUB
+        self.facility.save()
+        self.other = make_facility("Other", "other@example.com")
+        self.other.supabase_user_id = OTHER_FACILITY_SUB
+        self.other.save()
+
+        self.alice = make_profile(self.facility, "Alice", "alice@example.com", ALICE_SUB)
+        self.bob = make_profile(self.facility, "Bob", "bob@example.com", BOB_SUB)
+        self.carla = make_profile(self.facility, "Carla", "carla@example.com", CARLA_SUB)
+        self.shift = make_shift(self.facility, self.alice)
+
+    def test_facility_sees_open_swaps_on_its_own_shifts(self):
+        ShiftSwapRequest.objects.create(
+            shift=self.shift, requesting_professional=self.alice
+        )
+        self.authenticate(FACILITY_SUB)
+        response = self.client.get("/api/rota/swap-requests/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["requesting_professional_name"], "Alice")
+
+    def test_facility_sees_targeted_swaps_too(self):
+        """A peer is filtered out of someone else's targeted offer; the
+        facility owns the shift and is not a peer."""
+        ShiftSwapRequest.objects.create(
+            shift=self.shift,
+            requesting_professional=self.alice,
+            target_professional=self.carla,
+        )
+        self.authenticate(FACILITY_SUB)
+        self.assertEqual(len(self.client.get("/api/rota/swap-requests/").data), 1)
+
+    def test_facility_sees_who_actually_took_the_shift(self):
+        swap = ShiftSwapRequest.objects.create(
+            shift=self.shift, requesting_professional=self.alice
+        )
+        self.authenticate(BOB_SUB)
+        self.client.post(f"/api/rota/swap-requests/{swap.id}/accept/", {}, format="json")
+
+        self.authenticate(FACILITY_SUB)
+        row = self.client.get("/api/rota/swap-requests/?status=accepted").data[0]
+        self.assertEqual(row["accepted_by_name"], "Bob")
+        self.assertEqual(row["requesting_professional_name"], "Alice")
+
+        # And the rota itself reflects the reassignment.
+        shifts = self.client.get("/api/rota/shifts/").data
+        self.assertEqual(shifts[0]["professional_name"], "Bob")
+
+    def test_facility_cannot_see_another_facilitys_swaps(self):
+        ShiftSwapRequest.objects.create(
+            shift=self.shift, requesting_professional=self.alice
+        )
+        self.authenticate(OTHER_FACILITY_SUB)
+        self.assertEqual(self.client.get("/api/rota/swap-requests/").data, [])
+
+    def test_facility_cannot_accept_a_swap(self):
+        """Visibility, not a gate — and not a way to reassign staff either."""
+        swap = ShiftSwapRequest.objects.create(
+            shift=self.shift, requesting_professional=self.alice
+        )
+        self.authenticate(FACILITY_SUB)
+        response = self.client.post(
+            f"/api/rota/swap-requests/{swap.id}/accept/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.shift.refresh_from_db()
+        self.assertEqual(self.shift.professional, self.alice)
+
+    def test_facility_cannot_cancel_a_swap(self):
+        swap = ShiftSwapRequest.objects.create(
+            shift=self.shift, requesting_professional=self.alice
+        )
+        self.authenticate(FACILITY_SUB)
+        response = self.client.post(
+            f"/api/rota/swap-requests/{swap.id}/cancel/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        swap.refresh_from_db()
+        self.assertEqual(swap.status, ShiftSwapRequest.Status.PENDING)
+
+    def test_unapproved_facility_sees_nothing(self):
+        ShiftSwapRequest.objects.create(
+            shift=self.shift, requesting_professional=self.alice
+        )
+        self.facility.status = Facility.Status.SUSPENDED
+        self.facility.save()
+        self.authenticate(FACILITY_SUB)
+        self.assertEqual(
+            self.client.get("/api/rota/swap-requests/").status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
 
 
 @override_settings(
