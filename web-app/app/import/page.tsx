@@ -1,15 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabase } from "@/lib/supabase";
 import {
   ApiError,
   NotAuthenticatedError,
   apiGet,
   apiPostForm,
 } from "@/lib/api";
-import NavBar from "@/app/nav";
+import RequireKind from "@/app/guard";
 
 type ImportError = { row: number | null; error: string };
 
@@ -33,8 +32,11 @@ const POLL_MS = 1500;
 const POLL_TIMEOUT_MS = 120_000;
 
 export default function ImportPage() {
+  return <RequireKind kind="facility">{() => <StaffImport />}</RequireKind>;
+}
+
+function StaffImport() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [phase, setPhase] = useState<"idle" | "uploading" | "waiting" | "done">(
     "idle",
@@ -42,20 +44,6 @@ export default function ImportPage() {
   const [report, setReport] = useState<ImportReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    let active = true;
-    getSupabase()
-      .auth.getSession()
-      .then(({ data }) => {
-        if (!active) return;
-        if (!data.session) router.replace("/login");
-        else setChecking(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [router]);
 
   const pollUntilDone = useCallback(async (taskId: string) => {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
@@ -116,21 +104,11 @@ export default function ImportPage() {
     }
   }
 
-  if (checking) {
-    return (
-      <main>
-        <p className="sub">Checking your session…</p>
-      </main>
-    );
-  }
-
   const busy = phase === "uploading" || phase === "waiting";
 
   return (
     <>
-      <NavBar />
-      <main>
-        <h1>Import staff</h1>
+      <h1>Import staff</h1>
         <p className="sub">
           Upload a CSV or Excel file. Each person becomes a pending profile for
           PSL to verify, and receives a login email.
@@ -182,7 +160,6 @@ export default function ImportPage() {
         {error && <div className="notice error">{error}</div>}
 
         {report && <Report report={report} />}
-      </main>
     </>
   );
 }

@@ -2,14 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabase } from "@/lib/supabase";
 import {
   ApiError,
   NotAuthenticatedError,
   apiGet,
   apiPostJson,
 } from "@/lib/api";
-import NavBar from "@/app/nav";
+import RequireKind from "@/app/guard";
 import SwapRequests from "./swaps";
 import LeaveQueue from "./leave";
 
@@ -60,8 +59,11 @@ function formatWhen(iso: string): string {
 }
 
 export default function RotaPage() {
+  return <RequireKind kind="facility">{() => <FacilityRota />}</RequireKind>;
+}
+
+function FacilityRota() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -98,48 +100,63 @@ export default function RotaPage() {
     [router],
   );
 
+  const fetchRows = useCallback(
+    () =>
+      Promise.all([
+        apiGet<Shift[]>("/api/rota/shifts/"),
+        apiGet<Staff[]>("/api/facilities/staff/"),
+      ]),
+    [],
+  );
+
+  const applyRows = useCallback((shiftRows: Shift[], staffRows: Staff[]) => {
+    setShifts(shiftRows);
+    setStaff(staffRows);
+    // Drop selections for shifts that vanished or are now published.
+    setSelected((prev) => {
+      const stillDraft = new Set(
+        shiftRows.filter((s) => !s.is_published).map((s) => s.id),
+      );
+      return new Set([...prev].filter((id) => stillDraft.has(id)));
+    });
+    setReloadKey((n) => n + 1);
+  }, []);
+
+  // For the Refresh button and post-action reloads, where a synchronous
+  // setState is fine because it happens in an event handler.
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [shiftRows, staffRows] = await Promise.all([
-        apiGet<Shift[]>("/api/rota/shifts/"),
-        apiGet<Staff[]>("/api/facilities/staff/"),
-      ]);
-      setShifts(shiftRows);
-      setStaff(staffRows);
-      // Drop selections for shifts that vanished or are now published.
-      setSelected((prev) => {
-        const stillDraft = new Set(
-          shiftRows.filter((s) => !s.is_published).map((s) => s.id),
-        );
-        return new Set([...prev].filter((id) => stillDraft.has(id)));
-      });
-      setReloadKey((n) => n + 1);
+      const [shiftRows, staffRows] = await fetchRows();
+      applyRows(shiftRows, staffRows);
     } catch (err) {
       handleError(err);
     } finally {
       setLoading(false);
     }
-  }, [handleError]);
+  }, [fetchRows, applyRows, handleError]);
 
+  // The guard has settled session and role, so this only fetches. Written out
+  // rather than calling load(), because every setState must land after the
+  // await — React treats a synchronous write in an effect as a cascading
+  // render and eslint rejects it.
   useEffect(() => {
     let active = true;
-    getSupabase()
-      .auth.getSession()
-      .then(({ data }) => {
-        if (!active) return;
-        if (!data.session) {
-          router.replace("/login");
-          return;
-        }
-        setChecking(false);
-        void load();
-      });
+    void (async () => {
+      try {
+        const [shiftRows, staffRows] = await fetchRows();
+        if (active) applyRows(shiftRows, staffRows);
+      } catch (err) {
+        if (active) handleError(err);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
     return () => {
       active = false;
     };
-  }, [router, load]);
+  }, [fetchRows, applyRows, handleError]);
 
   async function createShift(event: React.FormEvent) {
     event.preventDefault();
@@ -212,14 +229,6 @@ export default function RotaPage() {
     });
   }
 
-  if (checking) {
-    return (
-      <main>
-        <p className="sub">Checking your session…</p>
-      </main>
-    );
-  }
-
   const drafts = shifts.filter((s) => !s.is_published);
   const published = shifts.filter((s) => s.is_published);
   const allDraftsSelected =
@@ -227,9 +236,7 @@ export default function RotaPage() {
 
   return (
     <>
-      <NavBar />
-      <main>
-        <h1>Rota</h1>
+      <h1>Rota</h1>
         <p className="sub">
           Create draft shifts, then publish them. Publishing notifies every
           assigned professional who has registered a device.
@@ -434,7 +441,6 @@ export default function RotaPage() {
           onError={handleError}
           onNotice={setNotice}
         />
-      </main>
     </>
   );
 }

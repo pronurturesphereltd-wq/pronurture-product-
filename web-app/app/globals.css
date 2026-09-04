@@ -248,6 +248,21 @@ nav.top button {
   font-size: 0.9rem;
 }
 
+/* Who is signed in, pushed to the right of the links. */
+nav.top .who {
+  margin-right: 1rem;
+}
+
+input[type="date"] {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
 h3 {
   font-size: 0.95rem;
   color: var(--muted);

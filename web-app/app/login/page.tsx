@@ -28,7 +28,7 @@ export default function LoginPage() {
       .auth.getSession()
       .then(({ data }) => {
         if (!active) return;
-        if (data.session) router.replace("/rota");
+        if (data.session) router.replace("/");
         else setChecking(false);
       });
     return () => {
@@ -74,7 +74,7 @@ export default function LoginPage() {
         });
         if (error) throw error;
       }
-      router.replace("/rota");
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

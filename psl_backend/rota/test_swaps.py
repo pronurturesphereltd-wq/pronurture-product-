@@ -621,3 +621,92 @@ class SwapAcceptConcurrencyTests(TransactionTestCase):
         than it is: the same statement is exercised on either backend, but only
         Postgres proves it under true row-level concurrency."""
         self.assertIn(connection.vendor, ("sqlite", "postgresql"))
+
+
+@override_settings(
+    SUPABASE_JWT_ISSUER=ISSUER,
+    SUPABASE_JWT_AUDIENCE=AUDIENCE,
+    SUPABASE_JWT_LEEWAY_SECONDS=10,
+)
+class ProfessionalShiftListTests(SupabaseAuthMixin, APITestCase):
+    """A professional reading their own shifts.
+
+    The list serves both audiences now, so what each one must NOT see is the
+    substance of these tests.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.facility = make_facility()
+        self.facility.supabase_user_id = FACILITY_SUB
+        self.facility.save()
+        self.other = make_facility("Other", "other@example.com")
+
+        self.alice = make_profile(self.facility, "Alice", "alice@example.com", ALICE_SUB)
+        self.bob = make_profile(self.facility, "Bob", "bob@example.com", BOB_SUB)
+        self.outsider = make_profile(
+            self.other, "Outsider", "outsider@example.com", OUTSIDER_SUB
+        )
+
+        self.mine = make_shift(self.facility, self.alice)
+        self.colleagues = make_shift(self.facility, self.bob)
+        self.draft = make_shift(self.facility, self.alice, published=False)
+        self.elsewhere = make_shift(self.other, self.outsider)
+
+    def test_professional_sees_only_their_own_published_shifts(self):
+        self.authenticate(ALICE_SUB)
+        response = self.client.get("/api/rota/shifts/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([row["id"] for row in response.data], [self.mine.id])
+
+    def test_drafts_are_hidden_from_staff(self):
+        """A draft is the facility thinking aloud. Showing it would make every
+        unpublished edit look like a change to someone's week."""
+        self.authenticate(ALICE_SUB)
+        ids = [row["id"] for row in self.client.get("/api/rota/shifts/").data]
+        self.assertNotIn(self.draft.id, ids)
+
+    def test_a_colleagues_shift_is_not_visible(self):
+        self.authenticate(ALICE_SUB)
+        ids = [row["id"] for row in self.client.get("/api/rota/shifts/").data]
+        self.assertNotIn(self.colleagues.id, ids)
+
+    def test_another_facilitys_shift_is_not_visible(self):
+        self.authenticate(OUTSIDER_SUB)
+        ids = [row["id"] for row in self.client.get("/api/rota/shifts/").data]
+        self.assertEqual(ids, [self.elsewhere.id])
+
+    def test_facility_still_sees_its_whole_rota(self):
+        self.authenticate(FACILITY_SUB)
+        ids = {row["id"] for row in self.client.get("/api/rota/shifts/").data}
+        self.assertEqual(ids, {self.mine.id, self.colleagues.id, self.draft.id})
+
+    def test_professional_cannot_create_a_shift(self):
+        """The permission class admits both, so the write path needs its own
+        guard — without it this is an AttributeError, a 500 where a 403
+        belongs."""
+        start = timezone.now() + timedelta(days=3)
+        self.authenticate(ALICE_SUB)
+        response = self.client.post(
+            "/api/rota/shifts/",
+            {
+                "role": SHIFT_ROLE,
+                "start_time": start.isoformat(),
+                "end_time": (start + timedelta(hours=8)).isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("Only a facility", response.data["detail"])
+
+    def test_professional_cannot_publish(self):
+        self.authenticate(ALICE_SUB)
+        response = self.client.post(
+            "/api/rota/shifts/publish/",
+            {"shift_ids": [self.draft.id]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.draft.refresh_from_db()
+        self.assertFalse(self.draft.is_published)

@@ -103,6 +103,17 @@ Added in Phase 1B:
 - **Role guardrail on swaps: built and tested** (PSL_Phase1B_Role_Guardrail_Addendum.md). See its own section below.
 - **Step 7 remains:** the end-to-end run against live infrastructure.
 
+## The web app serves two audiences, and knows which
+`GET /api/me/` returns `kind: "facility" | "professional"` plus the matching record. Every page wraps itself in `RequireKind` (`app/guard.tsx`), which renders the page only for the audience it was built for and otherwise points the caller at their own home. `NavBar` shows no links until identity is known, because guessing is what caused the original bug.
+
+**Why it exists:** a Supabase token proves identity, not role. Before this, `/rota` rendered facility controls to anyone holding a token, so a professional signing in got the shift-creation form, a page-level 403 from the two facility-only requests, and approve/decline buttons that would have 403'd too. Widening the swap and leave lists to serve both audiences is what turned a clean failure into a half-working page.
+
+Pages: `/rota`, `/import`, `/compliance` are facility-only. `/me` is professional-only — assigned shifts, offer for swap, withdraw, accept a colleague's offer, apply for leave, leave status. `/` routes to the right home; `/login` sends everyone there rather than assuming `/rota`.
+
+`GET /api/rota/shifts/` now serves both. A professional sees only shifts assigned to them **and only once published** — a draft is the facility thinking aloud, and showing it would make every unpublished edit look like a change to someone's week. `POST` stays facility-only and needs its own guard inside the view, since the permission class admits both; without it a professional reaching `request.facility` is a 500 where a 403 belongs.
+
+Note this is a testing convenience as much as a product decision. The Phase 1B spec routes the professional experience to "the eventual mobile app" (§3), and `/me` is deliberately minimal — enough to drive the swap and leave loops through a UI rather than curl.
+
 ## Role guardrail on shift swaps
 A patient-safety rule, so it is enforced server-side: a professional cannot accept a swap for a role they are not designated for. `Profile.role` is the operational designation ("ENT Registrar", "A&E Nurse") — facility-controlled information, distinct from the licence fields PSL verifies, and set in Django Admin like `license_expiry_date`. `Shift.ward` exists now too and is **purely informational; it never gates anything**.
 

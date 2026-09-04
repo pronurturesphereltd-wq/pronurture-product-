@@ -5,6 +5,8 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from core.views import WhoAmIView
+
 from compliance.views import (
     ComplianceAlertListView,
     ComplianceAlertResolveView,
@@ -38,6 +40,8 @@ from rota.views import (
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # --- Identity ---
+    path("api/me/", WhoAmIView.as_view(), name="whoami"),
     # --- Facilities ---
     path(
         "api/facilities/register/",

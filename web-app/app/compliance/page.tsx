@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabase } from "@/lib/supabase";
 import { ApiError, NotAuthenticatedError, apiGet, apiPostJson } from "@/lib/api";
-import NavBar from "@/app/nav";
+import RequireKind from "@/app/guard";
 
 type Alert = {
   id: number;
@@ -44,8 +43,11 @@ function describeDue(days: number): { text: string; tone: string } {
 }
 
 export default function CompliancePage() {
+  return <RequireKind kind="facility">{() => <ComplianceDashboard />}</RequireKind>;
+}
+
+function ComplianceDashboard() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [showResolved, setShowResolved] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -70,36 +72,45 @@ export default function CompliancePage() {
     [router],
   );
 
+  const fetchAlerts = useCallback(
+    () =>
+      apiGet<Alert[]>(
+        `/api/facilities/compliance-alerts/${showResolved ? "?status=all" : ""}`,
+      ),
+    [showResolved],
+  );
+
+  // For the Refresh button, where a synchronous setState is fine.
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const query = showResolved ? "?status=all" : "";
-      setAlerts(await apiGet<Alert[]>(`/api/facilities/compliance-alerts/${query}`));
+      setAlerts(await fetchAlerts());
     } catch (err) {
       handleError(err);
     } finally {
       setLoading(false);
     }
-  }, [handleError, showResolved]);
+  }, [fetchAlerts, handleError]);
 
+  // Session and role are already settled by the guard. Written out rather than
+  // calling load(), so every setState lands after the await.
   useEffect(() => {
     let active = true;
-    getSupabase()
-      .auth.getSession()
-      .then(({ data }) => {
-        if (!active) return;
-        if (!data.session) {
-          router.replace("/login");
-          return;
-        }
-        setChecking(false);
-        void load();
-      });
+    void (async () => {
+      try {
+        const rows = await fetchAlerts();
+        if (active) setAlerts(rows);
+      } catch (err) {
+        if (active) handleError(err);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
     return () => {
       active = false;
     };
-  }, [router, load]);
+  }, [fetchAlerts, handleError]);
 
   async function resolve(alert: Alert) {
     setResolving(alert.id);
@@ -122,19 +133,9 @@ export default function CompliancePage() {
     }
   }
 
-  if (checking) {
-    return (
-      <main>
-        <p className="sub">Checking your session…</p>
-      </main>
-    );
-  }
-
   return (
     <>
-      <NavBar />
-      <main>
-        <h1>Compliance</h1>
+      <h1>Compliance</h1>
         <p className="sub">
           Licences on your roster expiring within 30 days, or already expired.
           Checked once a day.
@@ -233,7 +234,6 @@ export default function CompliancePage() {
             when PSL records a new expiry date during licence verification.
           </p>
         </details>
-      </main>
     </>
   );
 }

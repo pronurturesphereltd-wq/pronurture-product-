@@ -37,19 +37,31 @@ def _role_mismatch_message(profile_role, shift_role):
 
 
 class ShiftListCreateView(APIView):
-    """List and create draft shifts for the calling facility."""
+    """List shifts, and create draft ones.
 
-    permission_classes = [IsFacility]
+    Reading serves both audiences: a facility sees its whole rota, drafts
+    included, while a professional sees only shifts assigned to them and only
+    once published. A draft is the facility thinking aloud — showing staff a
+    rota that has not been published would make every unpublished edit look
+    like a change to their week.
+
+    Writing stays facility-only.
+    """
+
+    permission_classes = [IsFacilityOrProfessional]
 
     @extend_schema(
         responses={200: ShiftSerializer(many=True)}, summary="List shifts"
     )
     def get(self, request):
-        shifts = (
-            Shift.objects.filter(facility=request.facility)
-            .select_related("professional")
-            .order_by("start_time")
-        )
+        facility = getattr(request, "facility", None)
+        shifts = Shift.objects.select_related("professional").order_by("start_time")
+
+        if facility is not None:
+            shifts = shifts.filter(facility=facility)
+        else:
+            shifts = shifts.filter(professional=request.profile, is_published=True)
+
         published = request.query_params.get("is_published")
         if published in ("true", "false"):
             shifts = shifts.filter(is_published=(published == "true"))
@@ -61,8 +73,15 @@ class ShiftListCreateView(APIView):
         summary="Create a draft shift",
     )
     def post(self, request):
+        facility = getattr(request, "facility", None)
+        if facility is None:
+            # The permission class admits both, so creating needs its own
+            # guard. Without it a professional would reach request.facility
+            # and get an AttributeError — a 500 where a 403 belongs.
+            raise PermissionDenied("Only a facility can create shifts.")
+
         serializer = ShiftSerializer(
-            data=request.data, context={"facility": request.facility}
+            data=request.data, context={"facility": facility}
         )
         serializer.is_valid(raise_exception=True)
         shift = serializer.save()
